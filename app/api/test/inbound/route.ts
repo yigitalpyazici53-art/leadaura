@@ -1,0 +1,141 @@
+import { NextRequest, NextResponse } from "next/server";
+import { sanitizeSmsText } from "@/lib/sanitize";
+import {
+  getState,
+  updateState,
+  addToHistory,
+  getNextStage,
+} from "@/lib/conversationState";
+import type { ConversationState } from "@/lib/conversationState";
+import { extractSlots, detectConflict } from "@/lib/slotExtractor";
+import type { ExtractedSlots } from "@/lib/slotExtractor";
+import { classifyIntent } from "@/lib/classifyIntent";
+import { generateSmsReply } from "@/lib/anthropic";
+import { buildOwnerAlert } from "@/lib/twilio";
+
+// Stage-based deterministic Turkish fallback used when Anthropic is unavailable.
+const STAGE_FALLBACK: Record<string, string> = {
+  collect_name:     "Merhaba! Randevu talebi icin adinizi ogrenebilir miyim?",
+  collect_service:  "Hangi hizmet icin randevu almak istersiniz?",
+  collect_datetime: "Hangi gun ve saatte gelmek istersiniz?",
+  collect_location: "Hangi subemizi tercih edersiniz?",
+  complete:         "Bilgilerinizi aldik. Ekibimiz sizi arayarak onaylayacaktir.",
+};
+
+export async function POST(req: NextRequest): Promise<NextResponse> {
+  // ── 1. Validate secret ───────────────────────────────────────────────────
+  const configuredSecret = process.env.TEST_WEBHOOK_SECRET;
+  if (!configuredSecret) {
+    return NextResponse.json(
+      { ok: false, error: "TEST_WEBHOOK_SECRET not configured on server" },
+      { status: 500 }
+    );
+  }
+
+  let parsed: { secret?: string; from?: string; body?: string };
+  try {
+    parsed = await req.json();
+  } catch {
+    return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
+  }
+
+  if (!parsed.secret || parsed.secret !== configuredSecret) {
+    return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
+  }
+
+  const from = (parsed.from ?? "").trim();
+  const rawInput = (parsed.body ?? "").trim();
+
+  if (!from || !rawInput) {
+    return NextResponse.json({ ok: false, error: "Missing from or body" }, { status: 400 });
+  }
+
+  // ── 2. Normalize / sanitize ──────────────────────────────────────────────
+  const input = sanitizeSmsText(rawInput);
+
+  // ── 3. Load state before ─────────────────────────────────────────────────
+  const stateBefore = await getState(from);
+  const isFirstMessage = stateBefore.history.length === 0;
+
+  // ── 4. Classify intent ───────────────────────────────────────────────────
+  const intentResult = classifyIntent(input, isFirstMessage);
+
+  // ── 5. Extract slots ─────────────────────────────────────────────────────
+  let extractedSlots: ExtractedSlots = {};
+  try {
+    extractedSlots = extractSlots(input);
+  } catch (err) {
+    console.error("[TestInbound] Slot extraction failed:", err instanceof Error ? err.message : err);
+  }
+
+  // ── 6. Detect service conflict ───────────────────────────────────────────
+  const conflictQuestion = detectConflict(stateBefore, extractedSlots);
+
+  // ── 7. Build reply (mirrors incoming-sms logic) ──────────────────────────
+  let assistantReply = "";
+
+  if (conflictQuestion) {
+    // Conflict: return clarification; skip state update and user history entry.
+    assistantReply = sanitizeSmsText(conflictQuestion);
+    console.log("[TestInbound] conflict clarification — no state update");
+  } else {
+    // Update state and advance stage
+    let stateUpdated = await updateState(from, extractedSlots as Partial<ConversationState>);
+    stateUpdated = await updateState(from, { stage: getNextStage(stateUpdated) });
+    await addToHistory(from, "user", input);
+
+    // Generate reply
+    if (process.env.ANTHROPIC_API_KEY) {
+      try {
+        assistantReply = await generateSmsReply(input, stateUpdated);
+      } catch (err) {
+        console.error("[TestInbound] Anthropic failed:", err instanceof Error ? err.message : err);
+        assistantReply = sanitizeSmsText(
+          STAGE_FALLBACK[stateUpdated.stage] ?? STAGE_FALLBACK.collect_name
+        );
+      }
+    } else {
+      assistantReply = sanitizeSmsText(
+        STAGE_FALLBACK[stateUpdated.stage] ?? STAGE_FALLBACK.collect_name
+      );
+    }
+  }
+
+  // Always record assistant reply in history (mirrors incoming-sms)
+  await addToHistory(from, "assistant", assistantReply);
+
+  // ── 8. Reload final state ────────────────────────────────────────────────
+  const stateAfter = await getState(from);
+
+  // ── 9. Owner alert preview — do NOT send SMS ─────────────────────────────
+  const isFirstHighUrgency = stateAfter.urgency === "high" && !stateAfter.ownerAlertedHighUrgency;
+  const isFirstComplete = stateAfter.stage === "complete" && !stateAfter.ownerAlertedComplete;
+  const wouldNotifyOwner = isFirstMessage || isFirstHighUrgency || isFirstComplete;
+  const ownerAlertPreview = wouldNotifyOwner ? buildOwnerAlert(from, stateAfter) : null;
+
+  // ── 10. Sheet log preview — do NOT write to sheet ────────────────────────
+  const wouldLogToSheet = !!(
+    process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL &&
+    process.env.GOOGLE_PRIVATE_KEY &&
+    process.env.GOOGLE_SHEET_ID
+  );
+
+  console.log(
+    `[TestInbound] done from=${from} intent=${intentResult.category} stage=${stateAfter.stage}`
+  );
+
+  return NextResponse.json({
+    ok: true,
+    from,
+    input,
+    intent: intentResult.category,
+    extractedSlots,
+    stateBefore,
+    stateAfter,
+    nextStage: stateAfter.stage,
+    assistantReply,
+    ownerAlertPreview,
+    wouldNotifyOwner,
+    wouldLogToSheet,
+  });
+}

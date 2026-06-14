@@ -151,6 +151,89 @@ npm run test-sms -- "my water heater is leaking"
 
 ---
 
+## Internal production test endpoint
+
+Simulate an inbound customer message without using Twilio SMS. Runs the full RandevuFlow pipeline and returns a JSON preview — **no SMS is sent, no Sheets row is written.**
+
+**Endpoint:** `POST /api/test/inbound`
+
+**Required env var:**
+
+| Variable | Notes |
+|---|---|
+| `TEST_WEBHOOK_SECRET` | A long random string you choose. Set it in Vercel and locally in `.env.local`. |
+
+> **Warning:** Keep `TEST_WEBHOOK_SECRET` private. Anyone who knows it can trigger pipeline logic and read conversation state on your production instance.
+
+**Request body:**
+
+```json
+{
+  "secret": "YOUR_TEST_WEBHOOK_SECRET",
+  "from":   "+905551112233",
+  "body":   "Merhaba lazer epilasyon fiyatı alabilir miyim?"
+}
+```
+
+**curl example (production):**
+
+```bash
+curl -s -X POST https://YOUR-VERCEL-DOMAIN/api/test/inbound \
+  -H "Content-Type: application/json" \
+  -d '{
+    "secret": "YOUR_TEST_WEBHOOK_SECRET",
+    "from":   "+905551112233",
+    "body":   "Merhaba lazer epilasyon fiyatı alabilir miyim?"
+  }' | jq .
+```
+
+**curl example (local dev server):**
+
+```bash
+curl -s -X POST http://localhost:3000/api/test/inbound \
+  -H "Content-Type: application/json" \
+  -d '{
+    "secret": "YOUR_TEST_WEBHOOK_SECRET",
+    "from":   "+905551112233",
+    "body":   "Merhaba lazer epilasyon fiyatı alabilir miyim?"
+  }' | jq .
+```
+
+**Response shape:**
+
+```json
+{
+  "ok": true,
+  "from": "+905551112233",
+  "input": "Merhaba lazer epilasyon fiyati alabilir miyim?",
+  "intent": "price_question",
+  "extractedSlots": { "service": "lazer epilasyon", "leadScore": "warm" },
+  "stateBefore": { "stage": "collect_name", "history": [] },
+  "stateAfter":  { "stage": "collect_name", "service": "lazer epilasyon", "history": [...] },
+  "nextStage": "collect_name",
+  "assistantReply": "Merhaba! Fiyat bilgisi icin ekibimiz sizinle iletisime gececektir. Adinizi ogrenebilir miyim?",
+  "ownerAlertPreview": "[RF] +905551112233 WARM | lazer epilasyon | eksik: tarih+konum",
+  "wouldNotifyOwner": true,
+  "wouldLogToSheet": false
+}
+```
+
+**Error responses:**
+
+| Status | Meaning |
+|---|---|
+| `401` | Missing or wrong secret |
+| `400` | Invalid JSON, or missing `from` / `body` fields |
+| `500` | `TEST_WEBHOOK_SECRET` not set on the server |
+
+**Local pipeline test (no server required):**
+
+```bash
+npm run test-inbound
+```
+
+---
+
 ## Architecture notes
 
 | Topic | Detail |
