@@ -234,6 +234,44 @@ npm run test-inbound
 
 ---
 
+## Production state persistence
+
+Vercel serverless functions are stateless — each request may land on a different instance with a fresh in-memory heap. Without Redis, multi-turn conversations lose their state between turns.
+
+**Required env vars for multi-turn reliability:**
+
+| Variable | Where to find it |
+|---|---|
+| `UPSTASH_REDIS_REST_URL` | [console.upstash.com](https://console.upstash.com) → your database → REST URL |
+| `UPSTASH_REDIS_REST_TOKEN` | Same page → REST Token |
+
+Without these, every request starts with an empty conversation state. The app logs `[State] Redis get failed` on each warm-start and falls back silently to in-memory storage.
+
+**Diagnosing state storage mode:**
+
+Call `POST /api/test/inbound` — the response includes:
+
+```json
+{
+  "stateStorage": "redis",
+  "statePersistenceWarning": null,
+  "redisConfigured": true,
+  "stateKey": "conv:+905551112233"
+}
+```
+
+If `stateStorage` is `"memory"`, multi-turn state will not survive across serverless invocations:
+
+```json
+{
+  "stateStorage": "memory",
+  "statePersistenceWarning": "Redis is not configured; state will not persist reliably on serverless.",
+  "redisConfigured": false
+}
+```
+
+---
+
 ## Architecture notes
 
 | Topic | Detail |

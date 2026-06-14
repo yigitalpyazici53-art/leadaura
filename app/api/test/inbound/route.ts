@@ -5,6 +5,8 @@ import {
   updateState,
   addToHistory,
   getNextStage,
+  getStateStorageMode,
+  hasRedisConfig,
 } from "@/lib/conversationState";
 import type { ConversationState } from "@/lib/conversationState";
 import { extractSlots, detectConflict, calculateLeadScoreFromState } from "@/lib/slotExtractor";
@@ -122,8 +124,23 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     process.env.GOOGLE_SHEET_ID
   );
 
+  // ── 11. State storage diagnostics ─────────────────────────────────────────
+  const stateStorage = getStateStorageMode();
+  const redisConfigured = hasRedisConfig();
+  const statePersistenceWarning =
+    stateStorage === "memory"
+      ? "Redis is not configured; state will not persist reliably on serverless."
+      : null;
+  const stateKey = `conv:${from}`;
+
+  if (stateStorage === "memory") {
+    console.warn(
+      "[TestInbound] WARNING: stateStorage=memory — Redis env vars missing; multi-turn state will not persist across serverless invocations."
+    );
+  }
+
   console.log(
-    `[TestInbound] done from=${from} intent=${intentResult.category} stage=${stateAfter.stage}`
+    `[TestInbound] done from=${from} intent=${intentResult.category} stage=${stateAfter.stage} stateStorage=${stateStorage}`
   );
 
   return NextResponse.json({
@@ -139,5 +156,9 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     ownerAlertPreview,
     wouldNotifyOwner,
     wouldLogToSheet,
+    stateStorage,
+    statePersistenceWarning,
+    redisConfigured,
+    stateKey,
   });
 }

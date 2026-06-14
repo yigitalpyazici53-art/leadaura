@@ -122,6 +122,19 @@ export function getNextStage(state: ConversationState): Stage {
   return "complete";
 }
 
+// ── Diagnostic helpers ────────────────────────────────────────────────────────
+
+export function hasRedisConfig(): boolean {
+  return !!(
+    process.env.UPSTASH_REDIS_REST_URL &&
+    process.env.UPSTASH_REDIS_REST_TOKEN
+  );
+}
+
+export function getStateStorageMode(): "redis" | "memory" {
+  return getRedis() !== null ? "redis" : "memory";
+}
+
 // ── Test helpers ─────────────────────────────────────────────────────────────
 
 export async function resetStateForTest(phone: string): Promise<void> {

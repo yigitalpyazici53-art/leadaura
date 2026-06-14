@@ -49,6 +49,8 @@ import {
   addToHistory,
   getNextStage,
   resetStateForTest,
+  getStateStorageMode,
+  hasRedisConfig,
 } from "../lib/conversationState";
 import type { ConversationState } from "../lib/conversationState";
 import type { ExtractedSlots } from "../lib/slotExtractor";
@@ -357,6 +359,51 @@ async function main() {
   assertContains("T3: ownerAlertPreview includes HOT", mt3.ownerAlertPreview ?? "", "HOT");
   assertContains("T3: ownerAlertPreview includes lazer epilasyon", mt3.ownerAlertPreview ?? "", "lazer epilasyon");
   assertContains("T3: ownerAlertPreview includes Ayşe", mt3.ownerAlertPreview ?? "", "Ayşe");
+
+  // ── Section 7: State storage mode diagnostics ────────────────────────────
+  console.log("\n── 7. State storage mode diagnostics ──");
+
+  const storageMode = getStateStorageMode();
+  const redisConf = hasRedisConfig();
+
+  console.log(`  storageMode     : ${storageMode}`);
+  console.log(`  redisConfigured : ${redisConf}`);
+
+  // getStateStorageMode must return exactly "redis" or "memory"
+  if (storageMode === "redis" || storageMode === "memory") {
+    pass("getStateStorageMode returns valid value", storageMode);
+  } else {
+    fail("getStateStorageMode returns valid value", `got ${JSON.stringify(storageMode)}`);
+  }
+
+  // hasRedisConfig must return a boolean
+  if (typeof redisConf === "boolean") {
+    pass("hasRedisConfig returns boolean", String(redisConf));
+  } else {
+    fail("hasRedisConfig returns boolean", `got ${typeof redisConf}`);
+  }
+
+  // storageMode must be consistent with redisConf:
+  // if Redis env vars are absent, mode must be "memory"
+  if (!redisConf && storageMode !== "memory") {
+    fail(
+      "storageMode=memory when Redis not configured",
+      `redisConfigured=${redisConf} but storageMode=${storageMode}`
+    );
+  } else {
+    pass("storageMode consistent with redisConfigured");
+  }
+
+  if (storageMode === "memory") {
+    console.warn(
+      "  [WARN] stateStorage=memory — multi-turn state will NOT persist across serverless invocations."
+    );
+    console.warn(
+      "  [WARN] Set UPSTASH_REDIS_REST_URL and UPSTASH_REDIS_REST_TOKEN for production reliability."
+    );
+  } else {
+    pass("Redis configured — multi-turn state will persist across invocations");
+  }
 
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");
