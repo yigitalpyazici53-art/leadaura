@@ -12,7 +12,7 @@ import {
 } from "@/lib/conversationState";
 import type { ConversationState } from "@/lib/conversationState";
 import { getRedis } from "@/lib/redis";
-import { extractSlots, detectConflict } from "@/lib/slotExtractor";
+import { extractSlots, detectConflict, calculateLeadScoreFromState } from "@/lib/slotExtractor";
 import type { ExtractedSlots } from "@/lib/slotExtractor";
 
 const EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
@@ -192,7 +192,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   } else {
     try {
       state = await updateState(from, extracted as Partial<ConversationState>);
-      state = await updateState(from, { stage: getNextStage(state) });
+      const recalcScore = calculateLeadScoreFromState(state);
+      state = await updateState(from, { leadScore: recalcScore, stage: getNextStage(state) });
       await addToHistory(from, "user", customerMessage);
     } catch (err) {
       console.error(
@@ -237,7 +238,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
   const isFirstHighUrgency = state.urgency === "high" && !state.ownerAlertedHighUrgency;
   const isFirstComplete    = state.stage === "complete" && !state.ownerAlertedComplete;
-  const shouldNotify       = isFirstMessage || isFirstHighUrgency || isFirstComplete;
+  const isHotLead          = state.leadScore === "hot";
+  const shouldNotify       = isFirstMessage || isFirstHighUrgency || isFirstComplete || isHotLead;
 
   if (shouldNotify) {
     console.log("[OwnerAlert] sending");

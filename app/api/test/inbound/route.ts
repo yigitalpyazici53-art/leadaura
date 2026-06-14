@@ -7,7 +7,7 @@ import {
   getNextStage,
 } from "@/lib/conversationState";
 import type { ConversationState } from "@/lib/conversationState";
-import { extractSlots, detectConflict } from "@/lib/slotExtractor";
+import { extractSlots, detectConflict, calculateLeadScoreFromState } from "@/lib/slotExtractor";
 import type { ExtractedSlots } from "@/lib/slotExtractor";
 import { classifyIntent } from "@/lib/classifyIntent";
 import { generateSmsReply } from "@/lib/anthropic";
@@ -79,9 +79,10 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     assistantReply = sanitizeSmsText(conflictQuestion);
     console.log("[TestInbound] conflict clarification — no state update");
   } else {
-    // Update state and advance stage
+    // Update state, recalculate leadScore from full accumulated state, then advance stage
     let stateUpdated = await updateState(from, extractedSlots as Partial<ConversationState>);
-    stateUpdated = await updateState(from, { stage: getNextStage(stateUpdated) });
+    const recalcScore = calculateLeadScoreFromState(stateUpdated);
+    stateUpdated = await updateState(from, { leadScore: recalcScore, stage: getNextStage(stateUpdated) });
     await addToHistory(from, "user", input);
 
     // Generate reply
@@ -110,7 +111,8 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   // ── 9. Owner alert preview — do NOT send SMS ─────────────────────────────
   const isFirstHighUrgency = stateAfter.urgency === "high" && !stateAfter.ownerAlertedHighUrgency;
   const isFirstComplete = stateAfter.stage === "complete" && !stateAfter.ownerAlertedComplete;
-  const wouldNotifyOwner = isFirstMessage || isFirstHighUrgency || isFirstComplete;
+  const isHotLead = stateAfter.leadScore === "hot";
+  const wouldNotifyOwner = isFirstMessage || isFirstHighUrgency || isFirstComplete || isHotLead;
   const ownerAlertPreview = wouldNotifyOwner ? buildOwnerAlert(from, stateAfter) : null;
 
   // ── 10. Sheet log preview — do NOT write to sheet ────────────────────────

@@ -42,7 +42,7 @@ if (!process.env.TEST_WEBHOOK_SECRET) {
 // ── Safe to import lib modules now ───────────────────────────────────────
 import { sanitizeSmsText, SMS_MAX_CHARS } from "../lib/sanitize";
 import { classifyIntent } from "../lib/classifyIntent";
-import { extractSlots, detectConflict } from "../lib/slotExtractor";
+import { extractSlots, detectConflict, calculateLeadScoreFromState } from "../lib/slotExtractor";
 import {
   getState,
   updateState,
@@ -165,7 +165,8 @@ async function runPipeline(from: string, rawInput: string): Promise<PipelineResu
     assistantReply = sanitizeSmsText(conflictQuestion);
   } else {
     let updated = await updateState(from, extractedSlots as Partial<ConversationState>);
-    updated = await updateState(from, { stage: getNextStage(updated) });
+    const recalcScore = calculateLeadScoreFromState(updated);
+    updated = await updateState(from, { leadScore: recalcScore, stage: getNextStage(updated) });
     await addToHistory(from, "user", input);
 
     if (process.env.ANTHROPIC_API_KEY) {
@@ -185,7 +186,8 @@ async function runPipeline(from: string, rawInput: string): Promise<PipelineResu
 
   const isFirstHighUrgency = stateAfter.urgency === "high" && !stateAfter.ownerAlertedHighUrgency;
   const isFirstComplete = stateAfter.stage === "complete" && !stateAfter.ownerAlertedComplete;
-  const wouldNotifyOwner = isFirstMessage || isFirstHighUrgency || isFirstComplete;
+  const isHotLead = stateAfter.leadScore === "hot";
+  const wouldNotifyOwner = isFirstMessage || isFirstHighUrgency || isFirstComplete || isHotLead;
   const ownerAlertPreview = wouldNotifyOwner ? buildOwnerAlert(from, stateAfter) : null;
 
   return {
@@ -313,6 +315,48 @@ async function main() {
     assertContains("owner alert has [RF] prefix", r1.ownerAlertPreview, "[RF]");
     console.log(`  alert preview: ${r1.ownerAlertPreview}`);
   }
+
+  // ── Section 6: Multi-turn continuity — 3 turns, same from number ─────────
+  console.log("\n── 6. Multi-turn continuity (3 turns, same from) ──");
+
+  const PHONE_MT = "+905551112233";
+  await resetStateForTest(PHONE_MT);
+
+  // Turn 1: service inquiry
+  const mt1 = await runPipeline(PHONE_MT, "Merhaba lazer epilasyon fiyatı alabilir miyim?");
+  console.log(`  T1 service=${mt1.stateAfter.service ?? "(none)"} stage=${mt1.nextStage} leadScore=${mt1.stateAfter.leadScore}`);
+  assertDefined("T1: stateAfter.service set", mt1.stateAfter.service);
+  assertContains("T1: stateAfter.service = lazer epilasyon", mt1.stateAfter.service ?? "", "lazer epilasyon");
+
+  // Turn 2: date/time — service must be carried over
+  const mt2 = await runPipeline(PHONE_MT, "Tüm vücut için cumartesi öğleden sonra uygun olur.");
+  console.log(`  T2 service=${mt2.stateAfter.service ?? "(none)"} date=${mt2.stateAfter.preferredDate ?? "(none)"} time=${mt2.stateAfter.preferredTime ?? "(none)"} leadScore=${mt2.stateAfter.leadScore}`);
+  assertContains("T2: stateAfter.service preserved from T1", mt2.stateAfter.service ?? "", "lazer epilasyon");
+  assertContains("T2: stateAfter.preferredDate = cumartesi", mt2.stateAfter.preferredDate ?? "", "cumartesi");
+  assertContains("T2: stateAfter.preferredTime = öğleden sonra", mt2.stateAfter.preferredTime ?? "", "öğleden sonra");
+  if (mt2.stateAfter.preferredTime === "45") fail("T2: preferredTime is not phone fragment", "got '45'");
+  else pass("T2: preferredTime is not '45'", mt2.stateAfter.preferredTime ?? "undefined");
+
+  // Turn 3: name + phone — all prior slots must be preserved
+  const mt3 = await runPipeline(PHONE_MT, "Adım Ayşe Yılmaz, telefonum 0532 123 45 67.");
+  console.log(`  T3 service=${mt3.stateAfter.service ?? "(none)"} name=${mt3.stateAfter.name ?? "(none)"} phone=${mt3.stateAfter.phone ?? "(none)"}`);
+  console.log(`     time=${mt3.stateAfter.preferredTime ?? "(none)"} leadScore=${mt3.stateAfter.leadScore} stage=${mt3.nextStage}`);
+  console.log(`     ownerAlert=${mt3.ownerAlertPreview ?? "(null)"}`);
+
+  assertContains("T3: stateAfter.service preserved", mt3.stateAfter.service ?? "", "lazer epilasyon");
+  assertContains("T3: stateAfter.name includes Ayşe", mt3.stateAfter.name ?? "", "Ayşe");
+  assertDefined("T3: stateAfter.phone captured", mt3.stateAfter.phone);
+  assertContains("T3: stateAfter.preferredDate remains cumartesi", mt3.stateAfter.preferredDate ?? "", "cumartesi");
+  assertContains("T3: stateAfter.preferredTime remains öğleden sonra", mt3.stateAfter.preferredTime ?? "", "öğleden sonra");
+  if (mt3.stateAfter.preferredTime === "45") fail("T3: preferredTime is not phone fragment '45'", "got '45'");
+  else pass("T3: preferredTime is not '45'", mt3.stateAfter.preferredTime ?? "undefined");
+  assertEqual("T3: leadScore is hot", mt3.stateAfter.leadScore, "hot");
+  if (mt3.nextStage === "collect_service") fail("T3: nextStage is not collect_service", `got "${mt3.nextStage}"`);
+  else pass("T3: nextStage is not collect_service", mt3.nextStage);
+  assertDefined("T3: ownerAlertPreview is non-null", mt3.ownerAlertPreview);
+  assertContains("T3: ownerAlertPreview includes HOT", mt3.ownerAlertPreview ?? "", "HOT");
+  assertContains("T3: ownerAlertPreview includes lazer epilasyon", mt3.ownerAlertPreview ?? "", "lazer epilasyon");
+  assertContains("T3: ownerAlertPreview includes Ayşe", mt3.ownerAlertPreview ?? "", "Ayşe");
 
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");

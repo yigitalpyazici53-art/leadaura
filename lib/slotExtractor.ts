@@ -27,8 +27,8 @@ const DATE_PATTERNS: RegExp[] = [
 ];
 
 const TIME_PATTERNS: RegExp[] = [
-  /\b\d{1,2}:\d{2}\b/,
-  /\b(?:saat\s*)?\d{1,2}(?:[.,]\d{2})?\s*(?:de|da|'de|'da|te|ta)?\b/i,
+  /\b\d{1,2}:\d{2}\b/,                          // 14:00, 9:00
+  /\bsaat\s*\d{1,2}(?:[.,]\d{2})?\b/i,         // saat 3, saat 15, saat 15.30
   // No \b around Turkish chars (ö, ğ not in \w): reorder longer before shorter to avoid partial match
   /(sabah erken|öğleden sonra|öğle|akşam üstü|akşam|gece yarısı|gece)/i,
   /(sabah|öğleden sonra|öğle|akşam)/i,
@@ -132,4 +132,26 @@ export function detectConflict(
     return `Daha önce ${state.service} hakkında konuşmuştuk. ${extracted.service} mi yoksa ${state.service} için mi randevu almak istiyorsunuz?`;
   }
   return null;
+}
+
+// Computes leadScore from the full accumulated conversation state (not just one message's slots).
+// Call this after merging extractedSlots into state to get an accurate multi-turn score.
+export function calculateLeadScoreFromState(state: {
+  service?: string;
+  preferredDate?: string;
+  preferredTime?: string;
+  name?: string;
+  phone?: string;
+  urgency?: UrgencyLevel;
+}): LeadScore {
+  const hasDateTime = !!(state.preferredDate || state.preferredTime);
+  const hasService = !!state.service;
+  const hasContact = !!(state.name || state.phone);
+  const isUrgent = state.urgency === "high";
+
+  if (isUrgent) return "hot";
+  if (hasService && hasDateTime) return "hot";
+  if (hasService && hasContact) return "hot";
+  if (hasService || hasDateTime) return "warm";
+  return "cold";
 }

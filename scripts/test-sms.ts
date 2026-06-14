@@ -47,7 +47,7 @@ import {
   resetStateForTest,
   _setStateForTest,
 } from "../lib/conversationState";
-import { extractSlots, detectConflict } from "../lib/slotExtractor";
+import { extractSlots, detectConflict, calculateLeadScoreFromState } from "../lib/slotExtractor";
 import { classifyIntent } from "../lib/classifyIntent";
 import { buildSystemPrompt } from "../lib/prompt";
 
@@ -236,6 +236,12 @@ function testSlotExtractor(): void {
     } else {
       fail("t3: phone starts with expected prefix", `got "${normalized}"`);
     }
+  }
+  // Phone number fragments must not be extracted as preferredTime
+  if (t3.preferredTime === undefined) {
+    pass("t3: preferredTime not extracted from phone number");
+  } else {
+    fail("t3: preferredTime should be undefined (not phone fragment)", `got "${t3.preferredTime}"`);
   }
 
   // T4: Urgent dental appointment
@@ -531,7 +537,41 @@ async function testServiceConflict(): Promise<void> {
   }
 }
 
-// ── 12. End-to-end Claude API scenarios ───────────────────────────────────
+// ── 12. Lead score upgrade across multi-turn conversations ────────────────
+
+async function testLeadScoreMultiTurn(): Promise<void> {
+  header("Lead score upgrade across multi-turn conversation");
+
+  const phone = "+905000000040";
+  await resetState(phone);
+
+  // Turn 1: service only → warm
+  let state = await updateState(phone, { service: "lazer epilasyon" });
+  let score = calculateLeadScoreFromState(state);
+  state = await updateState(phone, { leadScore: score });
+  assertEqual("T1: service only → warm", state.leadScore, "warm");
+
+  // Turn 2: add date + time → hot (service + datetime)
+  state = await updateState(phone, { preferredDate: "cumartesi", preferredTime: "öğleden sonra" });
+  score = calculateLeadScoreFromState(state);
+  state = await updateState(phone, { leadScore: score });
+  assertEqual("T2: service+datetime → hot", state.leadScore, "hot");
+
+  // Turn 3: add name + phone → still hot
+  state = await updateState(phone, { name: "Ayşe Yılmaz", phone: "05321234567" });
+  score = calculateLeadScoreFromState(state);
+  state = await updateState(phone, { leadScore: score });
+  assertEqual("T3: service+datetime+name+phone → hot", state.leadScore, "hot");
+
+  // Verify accumulated state has all fields
+  assertDefined("accumulated service", state.service);
+  assertDefined("accumulated preferredDate", state.preferredDate);
+  assertDefined("accumulated preferredTime", state.preferredTime);
+  assertDefined("accumulated name", state.name);
+  assertDefined("accumulated phone", state.phone);
+}
+
+// ── 13. End-to-end Claude API scenarios ───────────────────────────────────
 
 async function runApiScenario(
   phone: string,
@@ -552,7 +592,8 @@ async function runApiScenario(
       reply = conflict;
     } else {
       state = await updateState(phone, extracted);
-      state = await updateState(phone, { stage: getNextStage(state) });
+      const recalcScore = calculateLeadScoreFromState(state);
+      state = await updateState(phone, { leadScore: recalcScore, stage: getNextStage(state) });
       await addToHistory(phone, "user", msg);
       reply = await generateSmsReply(msg, state);
     }
@@ -621,6 +662,7 @@ async function main() {
   await testUpdateStateUndefinedFilter();
   await testStateTtlExpiry();
   testLeadScores();
+  await testLeadScoreMultiTurn();
   await testPrompt();
   await testOwnerAlertFormat();
   await testServiceConflict();
