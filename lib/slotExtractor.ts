@@ -63,6 +63,7 @@ const SERVICE_PATTERNS: Array<[RegExp, string]> = [
 const KNOWN_LOCATIONS: Record<string, string> = {
   "kadıköy":    "Kadıköy",
   "ataşehir":   "Ataşehir",
+  "ümraniye":   "Ümraniye",
   "nişantaşı":  "Nişantaşı",
   "beşiktaş":   "Beşiktaş",
   "şişli":      "Şişli",
@@ -93,10 +94,15 @@ const KNOWN_LOCATIONS: Record<string, string> = {
 // Tuple: [regex, capture group index]
 // These run before the KNOWN_LOCATIONS fallback.
 const LOCATION_PATTERNS: Array<[RegExp, number]> = [
+  // "Şube: Ümraniye", "Sube: Ümraniye", "Konum: Ataşehir", "Lokasyon: Beşiktaş", "Adres: Kadıköy"
+  [/(?:[ŞşSs]ube|[Kk]onum|[Ll]okasyon|[Aa]dres)\s*:\s*([A-ZÇĞİÖŞÜa-zçğışöü][A-Za-zÇĞİÖŞÜçğışöü]*)/, 1],
+  // "Şube Ümraniye", "şube Ümraniye" (space only, no colon — capital guard prevents capturing "olarak")
+  [/[ŞşSs]ube\s+([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)/, 1],
   // "Kadıköy şubesi", "Ataşehir şubesini", "Nişantaşı şubesinde"
   [/([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+(?:\s+[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)?)\s+şube/, 1],
-  // "Konum Kadıköy", "konum Kadıköy", "Şube olarak Kadıköy", "şube olarak Kadıköy"
+  // "Konum Kadıköy", "konum Kadıköy"
   [/[Kk]onum\s+([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)/, 1],
+  // "Şube olarak Kadıköy", "şube olarak Kadıköy"
   [/[Şş]ube\s+olarak\s+([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)/, 1],
   // "Nişantaşı tarafı olur", "Kadıköy yakın"
   [/([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]+)\s+(?:tarafı|yakın)/, 1],
@@ -106,6 +112,8 @@ const LOCATION_PATTERNS: Array<[RegExp, number]> = [
 
 // Looks for explicit name introductions
 const NAME_PATTERNS: RegExp[] = [
+  // "İsim: Aylin", "isim: aylin", "Ad: Aylin", "Adım: Aylin"
+  /(?:[İi]sim|[Aa]d(?:ım)?)\s*:\s*([A-ZÇĞİÖŞÜa-zçğışöüI][A-Za-zÇĞİÖŞÜçğışöü]*)/,
   /\b(?:ben|benim adım|ismim|adım)\s+([A-ZÇĞİÖŞÜa-zçğışöüI]{2,}(?:\s+[A-ZÇĞİÖŞÜa-zçğışöüI]{2,})?)\b/i,
   /^([A-ZÇĞİÖŞÜ][a-zçğışöü]{1,}(?:\s+[A-ZÇĞİÖŞÜ][a-zçğışöü]{1,})?)\s+(?:olarak|aradım|yazıyorum|merhaba)\b/,
 ];

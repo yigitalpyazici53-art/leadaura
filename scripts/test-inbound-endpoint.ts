@@ -560,6 +560,51 @@ async function main() {
   if (r6_wouldLog) pass("R6/T6: wouldLogToSheet = true");
   else fail("R6/T6: wouldLogToSheet = true", "lead data incomplete");
 
+  // ── Section 11: Structured Turkish label extraction ─────────────────────
+  console.log("\n── 11. Structured Turkish label extraction ──");
+
+  const structuredMsg = [
+    "İsim: Aylin",
+    "Telefon: 05313456576",
+    "Hizmet: lazer epilasyon",
+    "Zaman: pazar öğleden sonra 2",
+    "Şube: Ümraniye",
+  ].join("\n");
+
+  const sSlots = extractSlots(structuredMsg);
+  console.log(`  name          : ${sSlots.name ?? "(none)"}`);
+  console.log(`  phone         : ${sSlots.phone ?? "(none)"}`);
+  console.log(`  service       : ${sSlots.service ?? "(none)"}`);
+  console.log(`  preferredDate : ${sSlots.preferredDate ?? "(none)"}`);
+  console.log(`  preferredTime : ${sSlots.preferredTime ?? "(none)"}`);
+  console.log(`  location      : ${sSlots.location ?? "(none)"}`);
+
+  assertEqual("S1: name = Aylin", sSlots.name, "Aylin");
+  assertEqual("S1: phone = 05313456576", sSlots.phone, "05313456576");
+  assertContains("S1: service = lazer epilasyon", sSlots.service ?? "", "lazer epilasyon");
+  assertContains("S1: preferredDate = pazar", sSlots.preferredDate ?? "", "pazar");
+  if (
+    (sSlots.preferredTime ?? "").includes("öğleden sonra") ||
+    (sSlots.preferredTime ?? "").includes("2")
+  ) {
+    pass("S1: preferredTime contains öğleden sonra or 2", sSlots.preferredTime ?? "");
+  } else {
+    fail("S1: preferredTime contains öğleden sonra or 2", `got ${JSON.stringify(sSlots.preferredTime)}`);
+  }
+  assertEqual("S1: location = Ümraniye", sSlots.location, "Ümraniye");
+
+  // Pipeline stage must reach complete for the structured message
+  const PHONE_S1 = "+905551112500";
+  await resetStateForTest(PHONE_S1);
+  const sr1 = await runPipeline(PHONE_S1, structuredMsg);
+  assertEqual("S1: stage = complete", sr1.nextStage, "complete");
+
+  // Individual label patterns
+  assertEqual("S2: Şube: Kadıköy → Kadıköy", extractSlots("Şube: Kadıköy").location, "Kadıköy");
+  assertEqual("S3: Konum: Ataşehir → Ataşehir", extractSlots("Konum: Ataşehir").location, "Ataşehir");
+  assertEqual("S4: Lokasyon: Beşiktaş → Beşiktaş", extractSlots("Lokasyon: Beşiktaş").location, "Beşiktaş");
+  assertEqual("S5: Ümraniye şubesi uygun → Ümraniye", extractSlots("Ümraniye şubesi uygun").location, "Ümraniye");
+
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");
   if (failures === 0) {
