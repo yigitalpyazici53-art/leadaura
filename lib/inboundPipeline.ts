@@ -13,11 +13,11 @@ import { generateSmsReply } from "./anthropic";
 import { buildOwnerAlert } from "./twilio";
 
 const STAGE_FALLBACK: Record<string, string> = {
-  collect_name:     "Merhaba! Randevu talebi icin adinizi ogrenebilir miyim?",
-  collect_service:  "Hangi hizmet icin randevu almak istersiniz?",
-  collect_datetime: "Hangi gun ve saatte gelmek istersiniz?",
-  collect_location: "Hangi subemizi tercih edersiniz?",
-  complete:         "Bilgilerinizi aldik. Ekibimiz sizi arayarak onaylayacaktir.",
+  collect_treatment_area: "Merhaba! Hangi bolge icin lazer epilasyon dusunuyorsunuz?",
+  collect_first_time:     "Daha once lazer epilasyon yaptirdiniz mi?",
+  collect_datetime:       "Hangi gun ve saatte gelebilirsiniz?",
+  collect_name:           "Adinizi ve telefon numaranizi alabilir miyim?",
+  complete:               "Bilgilerinizi aldik. Merkezimiz sizi arayarak uygun zamani paylasacaktir.",
 };
 
 export interface InboundPipelineResult {
@@ -79,6 +79,11 @@ export async function processInboundMessage(
     }
   }
 
+  // When a treatment area is detected without an explicit service, normalize to "lazer epilasyon".
+  if (extractedSlots.treatmentArea && !extractedSlots.service && !stateBefore.service) {
+    extractedSlots.service = "lazer epilasyon";
+  }
+
   const conflictQuestion = detectConflict(stateBefore, extractedSlots);
 
   let assistantReply = "";
@@ -107,12 +112,12 @@ export async function processInboundMessage(
       } catch (err) {
         console.error("[Pipeline] Anthropic failed:", err instanceof Error ? err.message : err);
         assistantReply = sanitizeSmsText(
-          STAGE_FALLBACK[stateUpdated.stage] ?? STAGE_FALLBACK.collect_name
+          STAGE_FALLBACK[stateUpdated.stage] ?? STAGE_FALLBACK.collect_treatment_area
         );
       }
     } else {
       assistantReply = sanitizeSmsText(
-        STAGE_FALLBACK[stateUpdated.stage] ?? STAGE_FALLBACK.collect_name
+        STAGE_FALLBACK[stateUpdated.stage] ?? STAGE_FALLBACK.collect_treatment_area
       );
     }
   }
@@ -128,9 +133,8 @@ export async function processInboundMessage(
   const ownerAlertPreview = shouldNotifyOwner ? buildOwnerAlert(from, stateAfter) : null;
 
   const shouldLogToSheet = !!(
-    stateAfter.service &&
+    (stateAfter.service || stateAfter.treatmentArea) &&
     stateAfter.name &&
-    stateAfter.phone &&
     (stateAfter.preferredDate || stateAfter.preferredTime) &&
     stateAfter.location
   );
