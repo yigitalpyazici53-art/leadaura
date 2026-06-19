@@ -6,7 +6,7 @@ const outfit = Outfit({
   display: "swap",
 });
 
-const WHATSAPP_URL = "https://wa.me/905XXXXXXXXX";
+const CONTACT_URL = "mailto:yigitalpyazici53@gmail.com?subject=RandevuFlow%20Pilot%20Ba%C5%9Fvurusu";
 
 const C = {
   teal: "#0d9488",
@@ -136,17 +136,18 @@ export default function Home() {
         }
         @media (max-width: 900px) {
           .hero-grid { grid-template-columns: 1fr; gap: 0; padding: 3.5rem 1.5rem 3rem; }
-          .hero-right { display: none !important; }
+          .hero-right { margin-top: 2rem; }
+          .hero-chat-card { display: none; }
         }
 
-        .features-grid {
+        .how-it-works-grid {
           display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          gap: 1.25rem;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 1.5rem;
           margin-top: 2.5rem;
         }
         @media (max-width: 640px) {
-          .features-grid { grid-template-columns: 1fr; }
+          .how-it-works-grid { grid-template-columns: 1fr; }
         }
 
         .pricing-grid {
@@ -249,9 +250,6 @@ export default function Home() {
         }
         .nav-cta:hover { background: #1da851; }
 
-        .feature-card { transition: box-shadow 0.2s; }
-        .feature-card:hover { box-shadow: 0 8px 28px rgba(0,0,0,0.09); }
-
         .pricing-card { transition: box-shadow 0.2s, transform 0.2s; }
         .pricing-card:hover { box-shadow: 0 12px 40px rgba(0,0,0,0.11); transform: translateY(-2px); }
 
@@ -300,8 +298,8 @@ export default function Home() {
         <span style={{ fontSize: "1.2rem", fontWeight: 800, color: C.teal, letterSpacing: "-0.035em" }}>
           RandevuFlow
         </span>
-        <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="nav-cta">
-          Demo iste
+        <a href={CONTACT_URL} className="nav-cta">
+          Pilot ba&#351;vurun
         </a>
       </nav>
 
@@ -337,7 +335,7 @@ export default function Home() {
                 letterSpacing: "-0.03em",
               }}
             >
-              Instagram ve WhatsApp mesajlarını daha hızlı randevu talebine dönüştürün.
+              Kliniğiniz meşgulken WhatsApp&rsquo;tan gelen randevu taleplerini otomatik karşılayın.
             </h1>
 
             <p
@@ -349,12 +347,12 @@ export default function Home() {
                 maxWidth: "520px",
               }}
             >
-              RandevuFlow, lazer epilasyon ve estetik merkezleri için gelen &ldquo;fiyat?&rdquo; mesajlarını saniyeler içinde karşılar, müşteri bilgilerini toplar ve sıcak randevu taleplerini işletmenize bildirir.
+              RandevuFlow; lazer ve estetik klinikleri için WhatsApp&rsquo;tan gelen müşteri mesajlarını karşılar, hizmet&ndash;tarih&ndash;isim&ndash;telefon bilgisini toplar ve sıcak lead&rsquo;i size bildirir.
             </p>
 
             <div style={{ marginBottom: "1.5rem" }}>
-              <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="btn-wa">
-                WhatsApp&rsquo;tan demo isteyin
+              <a href={CONTACT_URL} className="btn-wa">
+                Pilot ba&#351;vurun
               </a>
             </div>
 
@@ -372,6 +370,7 @@ export default function Home() {
           <div className="hero-right" style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
             {/* Mini WhatsApp conversation */}
             <div
+              className="hero-chat-card"
               style={{
                 background: "#fff",
                 border: `1px solid ${C.border}`,
@@ -542,7 +541,7 @@ export default function Home() {
         </div>
       </section>
 
-      {/* Solution / Features */}
+      {/* How it works */}
       <section>
         <div style={{ maxWidth: "960px", margin: "0 auto", padding: "5rem 2.5rem" }}>
           <h2
@@ -557,44 +556,53 @@ export default function Home() {
             RandevuFlow nasıl çalışır?
           </h2>
           <p style={{ fontSize: "1rem", color: C.textMuted, lineHeight: 1.65, maxWidth: "500px" }}>
-            Müşteri mesaj atar, sistem devreye girer. Siz yalnızca hazır randevu taleplerini alırsınız.
+            Siz işlemdeyken bile.
           </p>
-          <div className="features-grid">
+          <div className="how-it-works-grid">
             {[
-              { icon: "⚡", title: "Anında cevap", desc: "Gelen mesajlara saniyeler içinde yanıt verir." },
-              { icon: "🎯", title: "Müşteri niteleme", desc: "Hangi işlemle ilgilendiğini, ne zaman gelmek istediğini ve iletişim bilgisini toplar." },
-              { icon: "🔥", title: "Sıcak lead bildirimi", desc: "Randevuya yakın müşterileri işletmeye anında bildirir." },
-              { icon: "💬", title: "Takip mesajları", desc: "Cevap vermeyen müşterilere nazik hatırlatma yapar." },
-            ].map((f) => (
+              {
+                n: "01",
+                title: "Müşteri WhatsApp'tan yazar",
+                desc: "WhatsApp veya Instagram'dan fiyat sorusu, randevu talebi veya bilgi isteği gelir.",
+              },
+              {
+                n: "02",
+                title: "RandevuFlow gerekli bilgileri toplar",
+                desc: "Hizmet, tarih, isim ve telefon bilgisini otomatik toplar. Bilmediği şeyleri sormaz.",
+              },
+              {
+                n: "03",
+                title: "Sıcak lead işletmeye bildirilir",
+                desc: "Hazır randevu talebi, müşteri özeti ve önerilen aksiyon işletmeye iletilir.",
+              },
+            ].map((step) => (
               <div
-                key={f.title}
-                className="feature-card"
+                key={step.n}
                 style={{
                   background: "#fff",
                   border: `1px solid ${C.border}`,
                   borderRadius: "16px",
-                  padding: "1.5rem",
+                  padding: "1.75rem 1.5rem",
                 }}
               >
                 <div
                   style={{
-                    width: "44px",
-                    height: "44px",
-                    borderRadius: "12px",
-                    background: C.tealBg,
-                    border: `1px solid ${C.tealBorder}`,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: "1.2rem",
+                    fontSize: "2.5rem",
+                    fontWeight: 800,
+                    color: C.teal,
+                    lineHeight: 1,
                     marginBottom: "1rem",
-                    flexShrink: 0,
+                    letterSpacing: "-0.04em",
                   }}
                 >
-                  {f.icon}
+                  {step.n}
                 </div>
-                <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: "0.4rem", color: C.text }}>{f.title}</div>
-                <div style={{ fontSize: "0.9rem", color: C.textMuted, lineHeight: 1.65 }}>{f.desc}</div>
+                <div style={{ fontWeight: 700, fontSize: "1rem", marginBottom: "0.45rem", color: C.text }}>
+                  {step.title}
+                </div>
+                <div style={{ fontSize: "0.9rem", color: C.textMuted, lineHeight: 1.65 }}>
+                  {step.desc}
+                </div>
               </div>
             ))}
           </div>
@@ -745,10 +753,10 @@ export default function Home() {
               color: C.text,
             }}
           >
-            İlk kurucu müşterilere özel pilot fiyat
+            İlk üç klinikten biriyle çalışmak istiyoruz.
           </h2>
           <p style={{ fontSize: "1rem", color: C.textMuted, lineHeight: 1.65, maxWidth: "500px" }}>
-            Sistemi gerçek müşteri akışınızda test edin. Kurulum, kişiselleştirme ve ilk optimizasyon sizin için yapılır.
+            Sistemi gerçek akışınızda kurarız. 7 gün içinde sonuçları birlikte değerlendiririz.
           </p>
 
           <div className="pricing-grid">
@@ -811,7 +819,7 @@ export default function Home() {
               <div style={{ height: "1px", background: "rgba(255,255,255,0.08)", margin: "1.25rem 0" }} />
               <CheckList items={pilotFeatures} white />
               <div style={{ marginTop: "auto" }}>
-                <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="btn-pilot-cta">
+                <a href={CONTACT_URL} className="btn-pilot-cta">
                   Başlamak istiyorum
                 </a>
               </div>
@@ -846,7 +854,7 @@ export default function Home() {
               <div style={{ height: "1px", background: C.border, margin: "1.25rem 0" }} />
               <CheckList items={standartFeatures} />
               <div style={{ marginTop: "auto" }}>
-                <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="btn-outline-cta">
+                <a href={CONTACT_URL} className="btn-outline-cta">
                   Bilgi al
                 </a>
               </div>
@@ -877,7 +885,7 @@ export default function Home() {
               <div style={{ height: "1px", background: C.border, margin: "1.25rem 0" }} />
               <CheckList items={klinikFeatures} />
               <div style={{ marginTop: "auto" }}>
-                <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="btn-outline-cta">
+                <a href={CONTACT_URL} className="btn-outline-cta">
                   Teklif isteyin
                 </a>
               </div>
@@ -885,6 +893,36 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {/* Trust signal */}
+      <div style={{ background: C.bg, borderTop: `1px solid ${C.border}` }}>
+        <div
+          style={{
+            maxWidth: "720px",
+            margin: "0 auto",
+            padding: "1.75rem 2.5rem",
+            textAlign: "center",
+            fontSize: "0.9rem",
+            color: C.textMuted,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: "0.5rem",
+          }}
+        >
+          <span
+            style={{
+              width: "6px",
+              height: "6px",
+              borderRadius: "50%",
+              background: C.teal,
+              display: "inline-block",
+              flexShrink: 0,
+            }}
+          />
+          İlk pilot işletmelerle birebir kurulum ve manuel kalite kontrol.
+        </div>
+      </div>
 
       {/* FAQ */}
       <section style={{ background: C.bgAlt, borderTop: `1px solid ${C.border}` }}>
@@ -942,7 +980,7 @@ export default function Home() {
               lineHeight: 1.2,
             }}
           >
-            Bir sonraki &ldquo;fiyat?&rdquo; mesajını kaçırmayın.
+            Merkeziniz için ücretsiz kurulum demosu yapalım.
           </h2>
           <p
             style={{
@@ -953,10 +991,10 @@ export default function Home() {
               margin: "0 auto 2.25rem",
             }}
           >
-            RandevuFlow&rsquo;un merkeziniz için nasıl çalışacağını 1 dakikalık demo ile görün.
+            Hangi hizmetleri sunduğunuzu anlatın. Sistemi size özel yapılandıralım. Birlikte test edelim.
           </p>
-          <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="btn-wa-lg">
-            WhatsApp&rsquo;tan demo isteyin
+          <a href={CONTACT_URL} className="btn-wa-lg">
+            Pilot ba&#351;vurun
           </a>
         </div>
       </section>
@@ -998,7 +1036,7 @@ export default function Home() {
       </footer>
 
       {/* Sticky WhatsApp */}
-      <a href={WHATSAPP_URL} target="_blank" rel="noopener noreferrer" className="sticky-wa">
+      <a href={CONTACT_URL} className="sticky-wa">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}>
           <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347zM12 0C5.373 0 0 5.373 0 12c0 2.127.558 4.126 1.533 5.857L.054 23.454a.5.5 0 00.492.6h.001l5.817-1.524A11.95 11.95 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 22a9.95 9.95 0 01-5.07-1.382l-.36-.214-3.742.981.998-3.648-.235-.374A9.95 9.95 0 012 12C2 6.478 6.478 2 12 2s10 4.478 10 10-4.478 10-10 10z" />
         </svg>

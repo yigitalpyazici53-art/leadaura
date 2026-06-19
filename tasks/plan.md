@@ -1,240 +1,334 @@
-# Plan: Fix 11 WhatsApp Flow Failures
+# Plan: Landing Page — Sales-Ready & Demo-Ready
 
-**Branch:** add-agent-skills-workflow
-**Approved decisions:** See SPEC.md (Option B for firstTimeLaser, opportunistic+guarded name fallback, location in alert)
+**Branch:** add-agent-skills-workflow  
+**Spec:** SPEC.md (Landing Page section)  
+**Approved decisions:** See product decisions below  
 **Do not modify code until a task is started.**
+
+---
+
+## Approved product decisions
+
+| Decision | Value |
+|---|---|
+| Hero headline | "Kliniğiniz meşgulken WhatsApp'tan gelen randevu taleplerini otomatik karşılayın." |
+| Sub-headline | "RandevuFlow; lazer ve estetik klinikleri için WhatsApp'tan gelen müşteri mesajlarını karşılar, hizmet–tarih–isim–telefon bilgisini toplar ve sıcak lead'i size bildirir." |
+| Trust signal | "İlk pilot işletmelerle birebir kurulum ve manuel kalite kontrol." — no fake metrics or fake testimonials |
+| WhatsApp number | No real number confirmed — replace all `905XXXXXXXXX` with `mailto:yigitalpyazici53@gmail.com?subject=RandevuFlow Pilot Başvurusu` |
+| Mobile hero visual | Do not hide — show a compact proof card (customer message + assistant reply + owner alert) on mobile |
 
 ---
 
 ## Dependency order
 
 ```
-Task 1 (buildOwnerAlert location)  ← independent, no deps
-Task 2 (remove firstTimeLaser gate) ← independent, no deps
-Task 3 (expand name fallback)       ← depends on Task 2 being applied first
-                                       (after Task 2, W2 stage is collect_datetime,
-                                        not collect_first_time; Task 3 must cover it)
+Task 1 (CTA / WhatsApp → mailto)         ← independent, safe to do first
+Task 2 (Hero text)                        ← independent
+Task 3 (Mobile hero proof card)           ← independent
+Task 4 (3-step How It Works section)      ← independent
+Task 5 (Move demo section up)             ← independent, structural reorder
+Task 6 (Pricing section headline)         ← independent
+Task 7 (Final CTA differentiation)        ← independent
+Task 8 (Trust signal strip)               ← independent
 ```
 
-Implement in order: 1 → 2 → 3. Verify after each.
+All tasks are independent and touch disjoint parts of `app/page.tsx`.  
+Implement in order 1 → 8. Verify each task before starting the next.
 
 ---
 
-## Task 1 — Add location to `buildOwnerAlert()`
+## Task 1 — Replace WhatsApp placeholder with mailto CTA
 
-**File:** `lib/twilio.ts`
-**Lines affected:** insert after line 58, before line 60
+**File:** `app/page.tsx`  
+**What:** Replace the `WHATSAPP_URL` constant and every button/link that uses it.
 
-Current block (lines 54–60):
+**Current:**
 ```ts
-  // Timing
-  const timeParts: string[] = [];
-  if (state.preferredDate) timeParts.push(state.preferredDate);
-  if (state.preferredTime) timeParts.push(state.preferredTime);
-  if (timeParts.length) lines.push(`Zaman: ${timeParts.join(" ")}`);
-
-  if (score === "HOT") lines.push("Hizli donus yapilmali");
+const WHATSAPP_URL = "https://wa.me/905XXXXXXXXX";
 ```
 
-After change (insert one line between the timing block and the HOT line):
+**After:**
 ```ts
-  // Timing
-  const timeParts: string[] = [];
-  if (state.preferredDate) timeParts.push(state.preferredDate);
-  if (state.preferredTime) timeParts.push(state.preferredTime);
-  if (timeParts.length) lines.push(`Zaman: ${timeParts.join(" ")}`);
-
-  if (state.location) lines.push(`Konum: ${state.location}`);
-
-  if (score === "HOT") lines.push("Hizli donus yapilmali");
+const CONTACT_URL = "mailto:yigitalpyazici53@gmail.com?subject=RandevuFlow%20Pilot%20Ba%C5%9Fvurusu";
 ```
 
-**What this fixes:** `state.location` is extracted and stored in state but was never rendered in the alert string.
+Replace all `href={WHATSAPP_URL}` with `href={CONTACT_URL}`.  
+Replace all `target="_blank" rel="noopener noreferrer"` on mailto links — remove `target="_blank"` (mailto does not open a new tab).  
+Keep the green WhatsApp button style — the color is branding, not tied to the URL scheme.  
+Update all visible button labels that say "WhatsApp'tan demo isteyin" → "Pilot başvurun" or "Demo isteyin" (no WhatsApp mention — the link is now email).
+
+**Nav CTA:** `"Demo iste"` → `"Pilot başvurun"`  
+**Hero button:** `"WhatsApp'tan demo isteyin"` → `"Pilot başvurun"`  
+**Pricing Pilot card button:** `"Başlamak istiyorum"` → keep (still works with mailto)  
+**Pricing Standart button:** `"Bilgi al"` → keep  
+**Pricing Klinik button:** `"Teklif isteyin"` → keep  
+**Final CTA button:** `"WhatsApp'tan demo isteyin"` → `"Pilot başvurun"`  
+**Sticky button:** `"Demo iste"` → `"Demo iste"` (keep short, fine)  
+
+**Verify (desktop + mobile):**
+- No visible `905XXXXXXXXX` text anywhere on the page
+- All CTA buttons open the user's mail client with pre-filled subject "RandevuFlow Pilot Başvurusu"
+- No button says "WhatsApp" in its label while linking to email
+
+---
+
+## Task 2 — Update hero headline and sub-headline
+
+**File:** `app/page.tsx`  
+**What:** Replace the `<h1>` text and the paragraph below it in the hero section.
+
+**Current `<h1>`:**
+```
+Instagram ve WhatsApp mesajlarını daha hızlı randevu talebine dönüştürün.
+```
+
+**New `<h1>`:**
+```
+Kliniğiniz meşgulken WhatsApp'tan gelen randevu taleplerini otomatik karşılayın.
+```
+
+**Current paragraph (`<p>`):**
+```
+RandevuFlow, lazer epilasyon ve estetik merkezleri için gelen "fiyat?" mesajlarını saniyeler içinde karşılar, müşteri bilgilerini toplar ve sıcak randevu taleplerini işletmenize bildirir.
+```
+
+**New paragraph:**
+```
+RandevuFlow; lazer ve estetik klinikleri için WhatsApp'tan gelen müşteri mesajlarını karşılar, hizmet–tarih–isim–telefon bilgisini toplar ve sıcak lead'i size bildirir.
+```
+
+**Keep:** Teal badge above the headline ("Lazer epilasyon ve estetik merkezleri"), benefit dots below the CTA, all styles.
+
+**Verify (desktop + mobile):**
+- New headline visible and legible at all breakpoints
+- No truncation or layout break on iPhone SE (375px width)
+- Old "daha hızlı" wording is gone
+
+---
+
+## Task 3 — Mobile hero proof card (remove hidden visual)
+
+**File:** `app/page.tsx`  
+**What:** The hero right panel (`className="hero-right"`) is hidden at ≤900px via `.hero-right { display: none !important; }` in the inline `<style>` block. Remove this suppression and replace it with a responsive layout.
+
+**Desktop (≥900px):** Keep the existing two-column grid — left text, right panel with mini chat + lead notification card. No change.
+
+**Mobile (<900px):**
+- Single column, text first
+- Below the CTA button, show a condensed **single proof card** instead of both cards:
+  - A 3-bubble WhatsApp snippet (customer message → assistant reply → owner alert chip)
+  - The owner alert card already in the right panel is sufficient on its own
+- Remove `display: none !important` from `.hero-right` at mobile
+- Instead, adjust padding/gap for the stacked layout
+
+**Condensed mobile card spec:**
+Show only the "hot lead notification" card (the dark card with amber "Yeni sıcak müşteri" header). It is the most impactful proof in the smallest space. The mini chat conversation card can remain desktop-only.
+
+Implementation approach:
+1. Remove the `display: none !important` rule for `.hero-right` in the `@media (max-width: 900px)` block
+2. In the mobile media query, change `.hero-right` to `display: flex` but hide only the first child (the WhatsApp chat card) — keep the second child (lead notification card)
+3. Add appropriate top margin/padding so the card doesn't crowd the CTA button
 
 **Verify:**
-```bash
-npm run type-check        # must exit 0
-npm run test-whatsapp     # expect 11 → 9 failures
-                          # newly passing: T4: ownerAlert includes Kadıköy
-                          #                W6: ownerAlert includes Kadıköy
-npm run test-sms          # must not regress
-npm run test-inbound      # must not regress
-```
+- On desktop (≥900px): both chat card and lead card visible in right column
+- On mobile (≤375px): lead notification card visible below the CTA — no horizontal scroll
+- On mobile: chat card NOT shown (too wide for mobile)
+- No layout shift or overflow at 375px, 390px, 414px widths
 
 ---
 
-## Task 2 — Remove `firstTimeLaser` gate from `getNextStage()`
+## Task 4 — Replace features grid with "Nasıl çalışır?" 3-step flow
 
-**File:** `lib/conversationState.ts`
-**Line affected:** line 162 (delete it entirely)
+**File:** `app/page.tsx`  
+**What:** Replace the current 4-card features grid section entirely with a numbered 3-step flow.
 
-Current `getNextStage()` (lines 160–166):
-```ts
-export function getNextStage(state: ConversationState): Stage {
-  if (!state.treatmentArea && !state.service) return "collect_treatment_area";
-  if (state.firstTimeLaser === undefined) return "collect_first_time";   // DELETE
-  if (!state.preferredDate && !state.preferredTime) return "collect_datetime";
-  if (!state.name) return "collect_name";
-  return "complete";
-}
+**Section heading:** Keep "RandevuFlow nasıl çalışır?"  
+**Section sub-heading:** Replace current sub with: "Siz işlemdeyken bile."
+
+**3-step content:**
+
+```
+1. Müşteri mesaj atar
+   WhatsApp veya Instagram'dan fiyat sorusu, randevu talebi veya bilgi isteği gelir.
+
+2. RandevuFlow devreye girer
+   Hizmet, tarih, isim ve telefon bilgisini otomatik toplar. Bilmediği şeyleri sormaz.
+
+3. Siz bildirimi alırsınız
+   Hazır randevu talebi, müşteri özeti ve önerilen aksiyon geliyor.
 ```
 
-After change:
-```ts
-export function getNextStage(state: ConversationState): Stage {
-  if (!state.treatmentArea && !state.service) return "collect_treatment_area";
-  if (!state.preferredDate && !state.preferredTime) return "collect_datetime";
-  if (!state.name) return "collect_name";
-  return "complete";
-}
-```
+**Layout:**
+- Horizontal on desktop (3 columns, step number + title + description)
+- Vertical stack on mobile
+- Step numbers: large teal numerals (e.g., `fontSize: "3rem"`, `color: C.teal`, `fontWeight: 800`)
+- A subtle connector line or arrow between steps on desktop
 
-**Do not touch:**
-- The `Stage` type definition — keep `"collect_first_time"` in the union (it remains a valid stage value even if `getNextStage()` no longer returns it).
-- `STAGE_FALLBACK` in `inboundPipeline.ts` — keep the `collect_first_time` entry as a safe fallback.
-- `extractSlots()` in `slotExtractor.ts` — still extracts `firstTimeLaser` when the user mentions first-time/returning info.
+**Remove:** The `.features-grid` CSS class and its 2-column grid rule (no longer needed). The 4 emoji feature cards are deleted entirely.
 
-**New stage progression after this change:**
-```
-collect_treatment_area  (no service/area yet)
-→ collect_datetime      (service known, no date/time)
-→ collect_name          (date/time known, no name)
-→ complete
-```
-
-**What this fixes:**
-- Flow was unconditionally blocked at `collect_first_time` because test conversations (and many real users) never explicitly answer "ilk kez mi?".
-- Removing the gate lets the flow advance to `collect_name` and `complete`.
+**Keep:** The section max-width, padding, and background (white).
 
 **Verify:**
-```bash
-npm run type-check        # must exit 0
-npm run test-whatsapp     # expect 9 → 6 failures
-                          # newly passing: T4: stage = complete
-                          #                W6: stage = complete
-                          #                D1: isFirstComplete triggers before flag written
-npm run test-sms          # must not regress
-npm run test-inbound      # must not regress
-npm run test-reset        # must not regress
-```
+- 3 steps visible and in correct order on both desktop and mobile
+- Step numbers legible and distinct
+- No old feature cards visible
+- Section does not break layout flow into the next section
 
 ---
 
-## Task 3 — Expand name fallback to additional stages
+## Task 5 — Move demo conversation section above pricing
 
-**File:** `lib/inboundPipeline.ts`
-**Lines affected:** 63–80 (the name fallback block)
+**File:** `app/page.tsx`  
+**What:** Reorder sections so the demo conversation (id="demo") appears immediately after the "Nasıl çalışır?" section, before the pricing section.
 
-**Context:** After Task 2, the stage at W2 ("ayşe") is `collect_datetime` (service was set at W1, no date/time yet). The current fallback only triggers in `collect_name`. It must also trigger in `collect_datetime` (and `collect_first_time` defensively). A guard ensures it only fires when the message produced no other extractable slots — preventing date/time strings or phone numbers from being mistaken for names.
+**Current order:**
+1. Nav
+2. Hero
+3. Problem
+4. Features (→ replaced by 3-step in Task 4)
+5. Demo conversation
+6. Pricing
+7. FAQ
+8. Final CTA
+9. Compliance
+10. Footer
 
-Current block (lines 63–80):
-```ts
-  // Stage-aware name fallback: bare Turkish names like "ayşe" or "mehmet" aren't caught
-  // by NAME_PATTERNS (which require explicit prefixes). When we're in collect_name stage
-  // or the last assistant message asked for a name, try the heuristic fallback.
-  if (!extractedSlots.name) {
-    const needFallback =
-      stateBefore.stage === "collect_name" ||
-      stateBefore.history
-        .slice(-2)
-        .some(
-          (h) =>
-            h.role === "assistant" &&
-            /isminizi|adınızı|adınız\b|adını/i.test(h.content)
-        );
-    if (needFallback) {
-      const fallback = extractNameFallback(input);
-      if (fallback) extractedSlots.name = fallback;
-    }
-  }
-```
+**New order:**
+1. Nav
+2. Hero
+3. Problem
+4. How it works (3-step)
+5. **Demo conversation** ← moved up from position 5 (no change in content)
+6. Pricing
+7. FAQ
+8. Final CTA
+9. Compliance
+10. Footer
 
-After change:
-```ts
-  // Stage-aware name fallback: bare Turkish names like "ayşe" or "mehmet" aren't caught
-  // by NAME_PATTERNS (which require explicit prefixes). Try the heuristic fallback when
-  // no other slots were extracted from this message (guard) and either the stage expects
-  // a name or the user appears to be volunteering one early.
-  if (!extractedSlots.name) {
-    const noOtherSlots = Object.keys(extractedSlots).length === 0;
-    const needFallback =
-      noOtherSlots &&
-      (stateBefore.stage === "collect_name" ||
-        stateBefore.stage === "collect_first_time" ||
-        stateBefore.stage === "collect_datetime" ||
-        stateBefore.history
-          .slice(-2)
-          .some(
-            (h) =>
-              h.role === "assistant" &&
-              /isminizi|adınızı|adınız\b|adını/i.test(h.content)
-          ));
-    if (needFallback) {
-      const fallback = extractNameFallback(input);
-      if (fallback) extractedSlots.name = fallback;
-    }
-  }
-```
-
-**Guard semantics:** `noOtherSlots` is `true` only when `extractSlots()` found zero slots. If the user sends "cumartesi öğleden sonra", `extractedSlots` will contain `{preferredDate, preferredTime}` → `noOtherSlots = false` → fallback skipped. If the user sends "ayşe", `extractedSlots` is `{}` → `noOtherSlots = true` → fallback runs.
-
-**False-positive protection (already in `extractNameFallback`):**
-- `BARE_NAME_RE` rejects strings that don't look like Turkish names.
-- `NAME_BLOCKLIST` explicitly blocks common single-word replies like "evet", "hayır", "tamam", "merhaba", etc.
-No changes needed to `slotExtractor.ts`.
-
-**What this fixes:**
-- W2 "ayşe" is extracted as "Ayşe" → W3/W4/W6 name assertions pass as side effect.
-- W6: ownerAlert includes Ayşe → passes (name now in state).
-- W6: shouldLogToSheet = true → passes (name fills the last required field).
+**What changes:** Only the JSX block order inside the returned `<div>`. No content or style edits.
 
 **Verify:**
-```bash
-npm run type-check        # must exit 0
-npm run test-whatsapp     # expect 6 → 0 failures
-                          # newly passing: W2: name = Ayşe
-                          #                W3: name still Ayşe
-                          #                W4: name still Ayşe
-                          #                W6: name = Ayşe
-                          #                W6: ownerAlert includes Ayşe
-                          #                W6: shouldLogToSheet = true
-npm run test-sms          # must not regress
-npm run test-inbound      # must not regress
-npm run test-reset        # must not regress
-```
+- Scrolling from top to bottom shows the demo conversation before the pricing section
+- Section backgrounds alternate correctly (bgAlt → white → bgAlt → white → dark → bgAlt → dark)
+- No section IDs or anchors break
 
 ---
 
-## Final regression check (after all three tasks)
+## Task 6 — Update pricing section headline and trust signal
 
-```bash
-npm run type-check    # 0 errors
-npm run test-whatsapp # 0 failures
-npm run test-sms      # 0 failures
-npm run test-inbound  # 0 failures
-npm run test-reset    # 0 failures
+**File:** `app/page.tsx`  
+**What:** Two changes in the pricing section.
+
+**Change A — Section headline:**  
+Current: `"İlk kurucu müşterilere özel pilot fiyat"`  
+New: `"İlk üç klinikten biriyle çalışmak istiyoruz."`
+
+**Change B — Section sub-text:**  
+Current: `"Sistemi gerçek müşteri akışınızda test edin. Kurulum, kişiselleştirme ve ilk optimizasyon sizin için yapılır."`  
+New: `"Sistemi gerçek akışınızda kurarız. 7 gün içinde sonuçları birlikte değerlendiririz."`
+
+**No changes to:** prices, tier names, feature lists, card styles.
+
+**Verify:**
+- New headline visible above the pricing cards
+- Old "kurucu müşterilere özel" wording is gone
+- Pricing card content unchanged
+
+---
+
+## Task 7 — Differentiate final CTA section
+
+**File:** `app/page.tsx`  
+**What:** Replace the final CTA section headline and sub-copy so it is not a repeat of the hero.
+
+**Current headline:** `"Bir sonraki 'fiyat?' mesajını kaçırmayın."`  
+**New headline:** `"Merkeziniz için ücretsiz kurulum demosu yapalım."`
+
+**Current sub-copy:** `"RandevuFlow'un merkeziniz için nasıl çalışacağını 1 dakikalık demo ile görün."`  
+**New sub-copy:** `"Hangi hizmetleri sunduğunuzu anlatın. Sistemi size özel yapılandıralım. Birlikte test edelim."`
+
+**Button label:** Already handled in Task 1 (→ "Pilot başvurun").
+
+**Keep:** Dark gradient background, button style.
+
+**Verify:**
+- New headline and sub-copy visible in the final dark section
+- No repetition with hero headline on the page
+- Button links to correct mailto (covered by Task 1)
+
+---
+
+## Task 8 — Add trust signal strip below pricing
+
+**File:** `app/page.tsx`  
+**What:** Add a minimal trust strip below the pricing cards and above the FAQ section.
+
+**Content (single centered line):**
 ```
+İlk pilot işletmelerle birebir kurulum ve manuel kalite kontrol.
+```
+
+**Visual style:**
+- Centered text, `fontSize: "0.9rem"`, `color: C.textMuted`
+- A small teal dot or checkmark icon before the text
+- White background, padding `1.5rem 2.5rem`
+- No border, no box — just a quiet line
+
+**Do not add:**
+- Star ratings
+- User counts
+- Testimonial quotes
+- Fake logos
+
+**Verify:**
+- Strip visible between pricing cards and FAQ on desktop and mobile
+- Text is legible, not bold, not prominent — supportive tone
+- No fake metrics visible anywhere on the page
+
+---
+
+## Full acceptance criteria (after all 8 tasks)
+
+| ID | Criterion | Desktop | Mobile |
+|---|---|---|---|
+| AC1 | Hero headline uses approved copy, no "daha hızlı" | ✓ | ✓ |
+| AC2 | Hero sub-headline uses approved copy | ✓ | ✓ |
+| AC3 | No visible placeholder number `905XXXXXXXXX` | ✓ | ✓ |
+| AC4 | All CTA buttons open mailto with correct pre-filled subject | ✓ | ✓ |
+| AC5 | No button label mentions "WhatsApp" while linking to email | ✓ | ✓ |
+| AC6 | Hero lead notification card visible on mobile (≤375px) | — | ✓ |
+| AC7 | Desktop hero right panel (chat + lead card) unchanged | ✓ | — |
+| AC8 | Features grid replaced by 3-step numbered flow | ✓ | ✓ |
+| AC9 | Demo conversation section appears before pricing on scroll | ✓ | ✓ |
+| AC10 | Pricing headline updated — no "kurucu müşterilere özel" | ✓ | ✓ |
+| AC11 | Final CTA headline differentiated from hero | ✓ | ✓ |
+| AC12 | Trust signal strip visible below pricing, no fake metrics | ✓ | ✓ |
+| AC13 | No horizontal scroll at 375px width | — | ✓ |
+| AC14 | FAQ section content unchanged | ✓ | ✓ |
+| AC15 | KVKK compliance note unchanged | ✓ | ✓ |
+| AC16 | Teal color palette, Outfit font, sticky button unchanged | ✓ | ✓ |
 
 ---
 
 ## Files changed (complete list)
 
-| File | Task | Change |
+| File | Tasks | Change summary |
 |---|---|---|
-| `lib/twilio.ts` | 1 | Add `Konum:` line after timing block in `buildOwnerAlert()` |
-| `lib/conversationState.ts` | 2 | Delete `firstTimeLaser === undefined` gate from `getNextStage()` |
-| `lib/inboundPipeline.ts` | 3 | Extend `needFallback` stages + add `noOtherSlots` guard |
+| `app/page.tsx` | 1–8 | All changes — hero text, CTA URLs, hero mobile layout, 3-step section, section reorder, pricing headline, final CTA, trust strip |
 
-No test files, no schema files, no other lib files.
+No other files changed.
 
 ---
 
-## Boundaries
+## Boundaries (from SPEC)
 
-| Rule | Detail |
-|---|---|
-| Stage type | Keep `"collect_first_time"` in the `Stage` union and in `STAGE_FALLBACK` |
-| `firstTimeLaser` schema field | Keep in `ConversationState`; still extracted by `extractSlots()` |
-| `extractNameFallback()` | Do not modify — `BARE_NAME_RE` and `NAME_BLOCKLIST` are correct |
-| Scope | `lib/` only — no test file changes |
-| New abstractions | None — three targeted edits |
+| Rule |
+|---|
+| Never add fake metrics, star ratings, or user counts |
+| Never add a contact form — mailto is the intentional CTA |
+| Never add animations that cause layout shift |
+| Never change pricing amounts or tier names |
+| Never add a testimonial without a real quote from a real person |
+| Do not modify FAQ content |
+| Do not modify the KVKK compliance note |
+| Do not touch any file outside `app/page.tsx` |

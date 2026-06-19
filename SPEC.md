@@ -1,229 +1,260 @@
-# SPEC: Fix WhatsApp Flow Failures (11 Tests)
+# SPEC: Landing Page — Sales-Ready & Demo-Ready
 
-**Status:** Awaiting approval
-**Scope:** `lib/inboundPipeline.ts`, `lib/conversationState.ts`, `lib/twilio.ts` — and possibly `scripts/test-whatsapp-webhook.ts`
-**Goal:** Fix 11 failing assertions in `npm run test-whatsapp` without making assumptions about whether tests or production logic are wrong
-
----
-
-## Context
-
-RandevuFlow is a Turkish laser/aesthetic intake system. WhatsApp inbound messages flow through `processInboundMessage()` in `lib/inboundPipeline.ts`, which drives a multi-stage state machine defined in `lib/conversationState.ts`. `npm run test-whatsapp` currently fails with **11 failures across 3 sections**.
+**Status:** Awaiting approval  
+**Scope:** `app/page.tsx` only (single file, all inline styles)  
+**Goal:** Make the RandevuFlow landing page stronger for first-impression demos and pilot outreach to laser/aesthetic clinic owners
 
 ---
 
-## Failure Map (11 failures → 3 root causes)
+## 1. Current Page Audit
 
-### Root Cause A — Stage stuck at `collect_first_time`
+### What the page has (section by section)
 
-`getNextStage()` (`conversationState.ts:161`) contains this gate:
+| Section | Content | Status |
+|---|---|---|
+| Nav | Logo + "Demo iste" WhatsApp CTA | Keep, minor tweak |
+| Hero | Headline + para + CTA + mini chat/lead card (hidden on mobile) | Needs work |
+| Problem | Red-bordered pain point list | Keep as-is |
+| Features (4 cards) | Anında cevap, müşteri niteleme, sıcak lead, takip | Refactor → 3-step flow |
+| Demo conversation | Full Zeynep WhatsApp exchange + owner alert card | Keep, move up |
+| Pricing | 3 tiers with actual TL prices | Keep structure, soften Pilot pitch |
+| FAQ | 5 items (KVKK, kurulum, iptal, tıbbi tavsiye) | Keep |
+| Final CTA | Dark gradient, repeats hero CTA | Differentiate text |
+| Compliance note | KVKK disclaimer | Keep |
+| Footer | One-liner | Keep |
+| Sticky WA button | Fixed bottom-right | Keep |
 
-```ts
-if (state.firstTimeLaser === undefined) return "collect_first_time";
-```
+### What is WEAK
 
-None of the test conversations ever set `firstTimeLaser`. The bot replies "Daha once lazer epilasyon yaptirdiniz mi?" indefinitely. Nothing downstream (collect_name, complete) is ever reached.
+**W1 — Hero is invisible on mobile.**  
+The hero right panel (WhatsApp chat preview + hot lead card) is `display: none !important` on `max-width: 900px`. Turkish SMB owners browse on mobile. The most persuasive visual proof disappears on the device most likely to be used.
 
-**Failures caused by this:**
-- `T4: stage = complete` — got `collect_first_time`
-- `W6: stage = complete` — got `collect_first_time`
-- `D1: isFirstComplete triggers before flag written` — PHONE_MT is stuck at `collect_first_time` after Section 2, so `stage === "complete"` is false and the deduplication assertion fails
+**W2 — Hero headline is vague.**  
+"Instagram ve WhatsApp mesajlarını daha hızlı randevu talebine dönüştürün" — "daha hızlı" (faster) says nothing. The actual claim is that it happens automatically, without the owner being present.
 
----
+**W3 — No 3-step flow.**  
+Features are four parallel cards. There is no narrative of: (1) customer writes → (2) AI handles it → (3) owner gets a hot lead. A clinic owner needs a mental model before caring about feature names.
 
-### Root Cause B — Bare-word name "ayşe" not extracted
+**W4 — Demo conversation is section 4.**  
+The most concrete proof — Zeynep's conversation turning into a lead card — is buried after the problem section and features section. Many mobile visitors will not reach it.
 
-`inboundPipeline.ts:66–80` runs the name fallback only when:
-- `stateBefore.stage === "collect_name"`, OR
-- the last assistant message matches `/isminizi|adınızı|adınız\b|adını/i`
+**W5 — No trust signal.**  
+No "built by", no "being piloted at", no human signal. For a new service asking for 3,500 TL/month, absence of any social proof is a friction point.
 
-Because of Root Cause A, the stage is stuck at `collect_first_time`. The assistant reply is "Daha once lazer epilasyon yaptirdiniz mi?" which does NOT match the name-asking regex. So when the user sends `"ayşe"` at W2, the fallback never fires.
+**W6 — Pilot CTA lacks urgency framing at section level.**  
+The "İlk 3 işletmeye özel" badge is inside the pricing card. There is no section-level headline communicating that the pilot slots are genuinely limited and early.
 
-**Failures caused by this (all cascade from W2 not capturing the name):**
-- `W2: name = Ayşe` — got `undefined`
-- `W3: name still Ayşe` — never set, so not persisted
-- `W4: name still Ayşe` — never set, so not persisted
-- `W6: name = Ayşe` — never set
-- `W6: ownerAlert includes Ayşe` — name absent from state
-- `W6: shouldLogToSheet = true` — `shouldLogToSheet` requires `stateAfter.name`; got `false`
+**W7 — Final CTA is a copy of the hero CTA.**  
+"Bir sonraki 'fiyat?' mesajını kaçırmayın. WhatsApp'tan demo isteyin." — same message, same button. Someone who scrolled to the bottom has already seen this. The final CTA should acknowledge that they read the page and give them one clear next step.
 
----
+**W8 — WhatsApp number is a placeholder.**  
+`WHATSAPP_URL = "https://wa.me/905XXXXXXXXX"` — must be replaced before any demo link is shared.
 
-### Root Cause C — `buildOwnerAlert()` does not render location
+### What should STAY (do not touch)
 
-`lib/twilio.ts:25–63` builds the owner alert line by line. There is no line for `state.location`. The location slot IS extracted and stored in state, but is silently omitted from the alert string.
-
-**Failures caused by this:**
-- `T4: ownerAlert includes Kadıköy` — "Kadıköy" not found in alert
-- `W6: ownerAlert includes Kadıköy` — "Kadıköy" not found in alert
-
----
-
-## Ambiguities — Decisions Required Before Implementation
-
-### Ambiguity 1: Should `firstTimeLaser` gate stage progression?
-
-**The question:** `getNextStage()` currently returns `collect_first_time` until `firstTimeLaser` is explicitly set. Test conversations never set it. Is this:
-
-**(A) A test gap** — the test messages should include an answer like "evet" / "hayır" / "ilk kez değil" so the pipeline correctly advances. Do not touch `getNextStage()`.
-
-**(B) A pipeline design issue** — `firstTimeLaser` is a useful data point but should NOT block stage progression. Remove the gate; collect it opportunistically when the user mentions it.
-
-**Evidence for (A):**
-- `collect_first_time` stage and its fallback reply exist intentionally.
-- `buildOwnerAlert()` already renders `firstTimeLaser` when set.
-- Adding one line to each test scenario would fix the stage failures without touching production logic.
-
-**Evidence for (B):**
-- All 6-turn and 4-turn test conversations were written WITHOUT first-time info, suggesting the author expected the flow to complete without it.
-- Real WhatsApp users may not answer "Daha once yaptirdiniz mi?" explicitly before providing a name/date.
-- Making it a hard gate means the flow never completes unless the user answers that specific question — degraded UX.
-- `shouldLogToSheet` and lead scoring do not require `firstTimeLaser`.
-
-**Recommendation:** Option (B). Remove the gate. Collect `firstTimeLaser` opportunistically. The owner can ask during the actual appointment call. **This is a product decision — confirm before implementing.**
+- Color palette (teal + WhatsApp green + dark bg)
+- Problem section — emotionally correct, well-formatted
+- FAQ content — trust-critical (KVKK, tıbbi tavsiye)
+- Demo conversation data (Zeynep) and owner notification card — best proof on the page
+- Honest pricing — no fake "free" tier, no fake metrics
+- Sticky WhatsApp button
+- Turkish language throughout
+- KVKK compliance note
 
 ---
 
-### Ambiguity 2: Should bare-word names be extracted outside `collect_name` stage?
+## 2. Recommended Messaging
 
-**The question:** When a user sends just `"ayşe"` (no phone, no service, no date), should it be captured as a name regardless of the current stage?
+### Positioning statement (internal reference)
 
-**(A) Stage-gated (current design):** Only extract bare names when in `collect_name` or when history contains an explicit name question. This avoids false positives.
+> RandevuFlow, lazer epilasyon ve estetik merkezleri için WhatsApp ve Instagram mesajlarını 7/24 otomatik olarak karşılar, müşteri bilgisini toplar ve sıcak randevu taleplerini işletmeye bildirir. Siz işlemdeyken.
 
-**(B) Opportunistic:** If the message contains no other extractable slots and looks like a Turkish name, store it regardless of stage.
+### Hero headline options (pick one)
 
-**Evidence for (A):**
-- `slotExtractor.ts:197` comment: "Call ONLY when extractSlots() found no name and current stage is collect_name or the assistant just asked for a name."
-- Without a stage gate, certain single-word replies could be misidentified as names (though `NAME_BLOCKLIST` and `BARE_NAME_RE` guard against common false positives).
+**Option A (outcome-first):**
+> "Fiyat sorarken gelen müşteri, siz işlemdeyken randevuya dönüşsün."
 
-**Evidence for (B):**
-- The W2 test sends `"ayşe"` in turn 2 (right after service inquiry) and expects `name = "Ayşe"` extracted.
-- Even if Ambiguity 1 is resolved as (B) and the gate is removed, the stage at W2 would be `collect_datetime` — still not `collect_name`. Name still would not be extracted.
-- The only way W2 works as written is if the pipeline extracts bare names at any stage (when no other slots are present).
+**Option B (problem-first):**
+> "Geç yanıt vermek yüzünden kaybettiğiniz müşteriler artık geçmişte kalsın."
 
-**Note:** If Ambiguity 1 is resolved as (A) (add first-time info to tests), the stage at W2 would depend on what turn provides the first-time answer and what the new stage sequence looks like. In that case, re-analyze W2 before fixing this.
+**Option C (capability-first, current style):**
+> "7/24 otomatik yanıt. Her 'fiyat?' mesajı sıcak randevu talebine."
 
-**Recommendation:** Extend the fallback to also trigger when `stateBefore.stage` is `"collect_first_time"` or `"collect_datetime"` AND `Object.keys(extractedSlots).length === 0` (nothing else was extracted from the message). This is narrow enough to avoid false positives. **Confirm scope before implementing.**
+Recommendation: **Option A** — clearest before/after for a clinic owner.
 
----
+### Sub-headline (replace current paragraph)
 
-### Ambiguity 3: Should `buildOwnerAlert()` include location? *(No ambiguity — yes)*
+> Müşteri WhatsApp'a yazıyor. RandevuFlow saniyeler içinde karşılıyor, hizmet bilgisini öğreniyor, uygun zamanı soruyor ve iletişim bilgilerini alıyor. Siz bildirimi görüyorsunuz.
 
-`state.location` is stored in `ConversationState`, is checked by `shouldLogToSheet`, and the tests explicitly assert it appears in the alert. This is a straightforward omission.
+### Social proof line (minimal, honest)
 
-**No decision needed.** Add a location line to `buildOwnerAlert()`.
+Since there are no live customers yet, use founder trust instead of fake metrics:
 
----
+> "Kurucu ekibi tarafından geliştirilmektedir. İlk pilot kliniği arıyoruz."
 
-## Implementation Plan (contingent on ambiguity resolution)
+Or, if there is even one test pilot:
 
-### Fix C — Add location to `buildOwnerAlert()` (safe, no dependencies)
+> "İstanbul'da bir estetik merkezinde aktif olarak test ediliyor."
 
-**File:** `lib/twilio.ts`, inside `buildOwnerAlert()`, after the timing block
+**Rule: Never claim a number you cannot prove.**
 
-```ts
-if (state.location) lines.push(`Konum: ${state.location}`);
-```
+### Pilot CTA section headline (replace "İlk kurucu müşterilere özel pilot fiyat")
 
-**Acceptance criteria:**
-- `T4: ownerAlert includes Kadıköy` → PASS
-- `W6: ownerAlert includes Kadıköy` → PASS
-- No other alert assertions break
+> "İlk üç klinikten biriyle çalışmak istiyoruz."
+
+Sub: "Sistemi gerçek akışınızda kurarız. 7 gün içinde sonucu birlikte değerlendiririz."
 
 ---
 
-### Fix A — `firstTimeLaser` gate (choose Option A or B from Ambiguity 1)
+## 3. Section-by-Section Change Plan
 
-**If Option B chosen (remove gate from pipeline):**
-
-**File:** `lib/conversationState.ts`, `getNextStage()`
-
-Remove:
-```ts
-if (state.firstTimeLaser === undefined) return "collect_first_time";
-```
-
-Keep `collect_first_time` as a valid `Stage` type — it may still appear in state when set directly. Only remove it from mandatory progression.
-
-**Acceptance criteria:**
-- `T4: stage = complete` → PASS
-- `W6: stage = complete` → PASS
-- `D1: isFirstComplete triggers before flag written` → PASS (cascades from T4 fix)
-- Single-turn test (Section 1) still returns a useful first reply
-- `firstTimeLaser` still captured via `extractSlots()` when user mentions it
-
-**If Option A chosen (add first-time signals to tests):**
-
-**File:** `scripts/test-whatsapp-webhook.ts`
-
-- Add "ilk kez yaptırıyorum" or "hayır, daha önce yaptırmadım" to an appropriate test message body
-- Identify which turn in the 4-turn and 6-turn flows should carry this signal
-- Do NOT change `getNextStage()`
+### Section: Nav
+**Change:** No structural changes. Replace placeholder WhatsApp number before demo.  
+**Keep:** Logo, "Demo iste" button.
 
 ---
 
-### Fix B — Bare-word name extraction scope (choose scope from Ambiguity 2)
+### Section: Hero
+**Change A — Headline.**  
+Replace current headline with Option A from recommended messaging above.
 
-**File:** `lib/inboundPipeline.ts`, name fallback block (lines 66–80)
+**Change B — Sub-paragraph.**  
+Replace with the tighter sub-headline from recommended messaging.
 
-Extend `needFallback` condition:
+**Change C — Mobile hero visual.**  
+The right panel (chat + lead card) must be visible on mobile. Options:
+- Remove `display: none !important` from `.hero-right` at `max-width: 900px`
+- Show a condensed single card (just the hot lead notification) on mobile instead of both cards
+- Stack the visual below the CTA on mobile instead of hiding it
 
-```ts
-const needFallback =
-  stateBefore.stage === "collect_name" ||
-  stateBefore.stage === "collect_first_time" ||
-  stateBefore.stage === "collect_datetime" ||
-  stateBefore.history
-    .slice(-2)
-    .some(
-      (h) =>
-        h.role === "assistant" &&
-        /isminizi|adınızı|adınız\b|adını/i.test(h.content)
-    );
-```
+Recommended: Show just the lead notification card below the CTA on mobile (≤900px). It is smaller and still proves the concept.
 
-Also add a guard: only invoke `extractNameFallback` when `Object.keys(extractedSlots).length === 0`, so a message like "cumartesi öğleden sonra" that already yielded date/time slots is never mistaken for a name.
-
-**Acceptance criteria:**
-- `W2: name = Ayşe` — "ayşe" extracted and title-cased → PASS
-- `W3: name still Ayşe` → PASS (persisted across turns)
-- `W4: name still Ayşe` → PASS
-- `W6: name = Ayşe` → PASS
-- `W6: ownerAlert includes Ayşe` → PASS
-- `W6: shouldLogToSheet = true` → PASS
-- Single-word messages "evet", "hayır", "tamam" are NOT extracted as names (covered by existing `NAME_BLOCKLIST` and `BARE_NAME_RE`)
+**Keep:** Teal badge ("Lazer epilasyon ve estetik merkezleri"), benefit dots, WhatsApp button.
 
 ---
 
-## Boundaries
+### Section: Problem
+**No changes.** Content and design are correct.
+
+---
+
+### Section: Features → replace with "Nasıl çalışır?" 3-step flow
+**Change:** Replace the 4-card features grid with a numbered 3-step flow:
+
+1. **Müşteri mesaj atar** — WhatsApp veya Instagram'dan gelir. Siz işlemdeysiniz.
+2. **RandevuFlow devreye girer** — Hizmet, zaman ve iletişim bilgisini otomatik olarak toplar.
+3. **Siz bildirimi alırsınız** — Sıcak müşteri özeti, hazır randevu talebiyle birlikte gelir.
+
+Each step has a number, a short title, and 1-sentence description. No feature jargon.
+
+**Keep after the 3-step flow:** A 2-col grid of 4 supporting detail chips (Anında cevap, Müşteri niteleme, Sıcak lead bildirimi, Takip mesajları) — smaller, supporting role.
+
+---
+
+### Section: Demo Conversation
+**Change — Move up in page order.**  
+Current order: Problem → Features → Demo → Pricing  
+New order: Problem → How it works (3 steps) → Demo → Pricing
+
+**Change — Section headline.**  
+Current: "Gerçek bir fiyat sorusu nasıl randevuya dönüşür?"  
+Keep this — it is clear and concrete.
+
+**Keep:** All conversation messages, the Zeynep example, the owner notification card.
+
+---
+
+### Section: Pricing
+**Change — Section headline.**  
+Replace "İlk kurucu müşterilere özel pilot fiyat" with:  
+"İlk üç klinikten biriyle çalışmak istiyoruz."
+
+**Change — Pilot card badge.**  
+"İlk 3 işletmeye özel" is fine but add scarcity context at the section level, not just the card.
+
+**Keep:** All prices, all feature lists, all 3 tiers. Do not invent new tiers.
+
+---
+
+### Section: FAQ
+**No changes.** Content is trustworthy and appropriately cautious.
+
+---
+
+### Section: Final CTA
+**Change — Headline.**  
+Replace: "Bir sonraki 'fiyat?' mesajını kaçırmayın."  
+With: "Merkeziniz için ücretsiz kurulum demosu yapalım."
+
+**Change — Sub-copy.**  
+Replace: "RandevuFlow'un merkeziniz için nasıl çalışacağını 1 dakikalık demo ile görün."  
+With: "Hangi hizmetleri sunduğunuzu anlatın. Sistemi size özel yapılandıralım. Birlikte test edelim."
+
+**Keep:** Button style and WhatsApp link.
+
+---
+
+### Section: Compliance note + Footer
+**No changes.**
+
+---
+
+### Section: Sticky WhatsApp Button
+**No changes.**
+
+---
+
+## 4. Acceptance Criteria
+
+| ID | Criterion |
+|---|---|
+| AC1 | Hero headline updated to chosen option — "daha hızlı" removed |
+| AC2 | Hero sub-paragraph replaced with tighter version |
+| AC3 | Hero visual (chat/lead card) visible on mobile — not hidden at ≤900px |
+| AC4 | Features section replaced with numbered 3-step "Nasıl çalışır?" flow |
+| AC5 | Demo section appears before pricing in page scroll order |
+| AC6 | Pricing section headline updated (no "kurucu müşterilere özel") |
+| AC7 | Final CTA headline and sub-copy differentiated from hero |
+| AC8 | No fake metrics, no fake testimonials, no unverifiable claim |
+| AC9 | Page is readable and functional on iPhone SE width (375px) — no horizontal scroll, no hidden key content |
+| AC10 | WhatsApp placeholder (`905XXXXXXXXX`) replaced with real number before any live link is shared |
+| AC11 | All existing FAQ content preserved unchanged |
+| AC12 | KVKK compliance note preserved |
+| AC13 | Teal color palette, font (Outfit), and sticky WhatsApp button unchanged |
+
+---
+
+## 5. Out-of-Scope Boundaries
 
 | Category | Rule |
 |---|---|
-| **Always safe** | Fix `buildOwnerAlert()` — additive only, no behavioral change |
-| **Confirm first** | Remove `firstTimeLaser` gate from `getNextStage()` — changes prod conversation flow |
-| **Confirm first** | Expand name fallback to additional stages — changes when names are captured |
-| **Never** | Change `ConversationState` schema without regression-testing all 4 test scripts |
-| **Never** | Touch `test-sms.ts` or `test-inbound-endpoint.ts` — out of scope |
-| **Never** | Assume test messages are wrong without a product decision |
-| **Never** | Add error handling for scenarios that can't happen |
+| **Never** | Add fake review counts, star ratings, or "500+ clinics" style metrics |
+| **Never** | Add a dashboard feature or screenshot — the product has no dashboard |
+| **Never** | Claim the AI is GPT-4 or name any specific model |
+| **Never** | Add a contact form — WhatsApp is the intentional CTA |
+| **Never** | Add animations that increase layout shift or reduce mobile load speed |
+| **Out of scope now** | A/B testing or analytics integration |
+| **Out of scope now** | Multi-language support (EN) |
+| **Out of scope now** | Blog, case study, or resources section |
+| **Out of scope now** | Any backend change — this is a static page only |
+| **Out of scope now** | Changing the pricing tiers or amounts |
+| **Out of scope now** | Adding a video embed |
+| **Confirm first** | Any new section not listed in this spec |
+| **Confirm first** | Changing the pricing amounts or tier names |
+| **Confirm first** | Adding a testimonial — only with a real quote from a real person |
 
 ---
 
-## Expected Outcome
+## 6. Open Questions (answer before implementation begins)
 
-Resolving all three root causes brings failures from 11 → 0:
+**Q1 — Hero headline:**  
+Which option do you prefer? Option A ("Fiyat sorarken gelen müşteri..."), B ("Geç yanıt vermek yüzünden..."), or C (current-style capability statement)?
 
-| Root Cause | Failures Fixed |
-|---|---|
-| C — location in alert | 2 |
-| A — `firstTimeLaser` gate | 3 (T4 stage, W6 stage, D1 cascade) |
-| B — name extraction scope | 6 (W2–W6 name assertions + sheet log) |
-| **Total** | **11** |
+**Q2 — Trust signal:**  
+Is there a real pilot clinic or test partner? If yes, one honest sentence about it would be the strongest trust signal available. If no, use the "kurucu ekibi" framing.
 
----
+**Q3 — WhatsApp number:**  
+What is the real WhatsApp number to replace `905XXXXXXXXX`?
 
-## Open Questions for Product Owner
-
-1. **Is `firstTimeLaser` a required intake field?** If required, add it to test messages (Option A). If advisory, remove the gate (Option B).
-2. **Should users be able to volunteer their name at any point**, or only when explicitly asked?
-3. **Is there a `collect_location` stage missing from `getNextStage()`?** Currently location is captured if mentioned and defaulted to "Ümraniye" if absent at complete. Should this be a gated stage?
+**Q4 — Mobile hero:**  
+Preference for mobile layout: (A) show only the lead notification card below the CTA, (B) show a condensed version of both cards stacked, or (C) keep text-only on mobile?
