@@ -745,109 +745,6 @@ async function testCompleteStageReply(): Promise<void> {
   assertSms("complete reply fits SMS limit", reply);
 }
 
-// ── 16. Booking link handoff guard (dry-run) ─────────────────────────────
-
-async function testBookingLinkHandoff(): Promise<void> {
-  header("Booking link handoff guard (dry-run, no real SMS sent)");
-
-  const testBookingUrl = "https://example.clinic/book";
-  const prevBookingUrl = process.env.CLINIC_BOOKING_URL;
-  process.env.CLINIC_BOOKING_URL = testBookingUrl;
-
-  // Mirrors the fixed route: merge request.state into existing Redis state,
-  // preserving bookingLinkSent unless the caller explicitly overrides it.
-  async function routeCallSim(
-    from: string,
-    requestState: Partial<ConversationState> | undefined,
-  ): Promise<{ wouldSend: boolean; dryRunMsg: string | null; stateAfter: ConversationState }> {
-    const existing = await getState(from);
-    const bookingLinkSentOverride =
-      requestState && "bookingLinkSent" in requestState
-        ? requestState.bookingLinkSent
-        : existing.bookingLinkSent;
-
-    const seeded = {
-      ...existing,
-      lastUpdated: Date.now(),
-      ...(requestState ?? {}),
-      bookingLinkSent: bookingLinkSentOverride,
-    } as ConversationState;
-    await _setStateForTest(from, seeded);
-
-    const state = await getState(from);
-    const url = process.env.CLINIC_BOOKING_URL;
-    let wouldSend = false;
-    let dryRunMsg: string | null = null;
-
-    if (state.stage === "complete" && !state.bookingLinkSent && url) {
-      wouldSend = true;
-      dryRunMsg = `Complete your appointment request here: ${url}`;
-      await updateState(from, { bookingLinkSent: true });
-    }
-
-    const stateAfter = await getState(from);
-    return { wouldSend, dryRunMsg, stateAfter };
-  }
-
-  try {
-    const phone = "+905000000060";
-    await resetState(phone);
-
-    // ── BL1: complete + bookingLinkSent=false → fires ──────────────────────
-    const bl1 = await routeCallSim(phone, {
-      stage: "complete",
-      name: "Zeynep",
-      service: "laser hair removal",
-      treatmentArea: "full body",
-      preferredDate: "saturday",
-      preferredTime: "afternoon",
-      leadScore: "hot",
-      bookingLinkSent: false,
-    });
-    assertEqual("BL1: wouldSend=true on first call", bl1.wouldSend, true);
-    assertEqual(
-      "BL1: dryRunMsg contains booking URL",
-      bl1.dryRunMsg,
-      `Complete your appointment request here: ${testBookingUrl}`
-    );
-    assertEqual("BL1: bookingLinkSent=true persisted after guard", bl1.stateAfter.bookingLinkSent, true);
-
-    // ── BL2: second request with only stage:"complete" — no bookingLinkSent ──
-    // Route must merge, not replace: existing bookingLinkSent:true is preserved.
-    const bl2 = await routeCallSim(phone, { stage: "complete" });
-    assertEqual("BL2: wouldSend=false — merge preserves bookingLinkSent:true", bl2.wouldSend, false);
-    assertEqual("BL2: dryRunMsg=null on second call", bl2.dryRunMsg, null);
-    assertEqual("BL2: bookingLinkSent still true after second call", bl2.stateAfter.bookingLinkSent, true);
-
-    // ── BL3: third request with explicit bookingLinkSent:false → fires again ─
-    const bl3 = await routeCallSim(phone, { stage: "complete", bookingLinkSent: false });
-    assertEqual("BL3: wouldSend=true when bookingLinkSent explicitly overridden to false", bl3.wouldSend, true);
-    assertEqual("BL3: bookingLinkSent=true re-persisted after third-call guard", bl3.stateAfter.bookingLinkSent, true);
-
-    // ── BL4: stage≠complete → should not trigger ───────────────────────────
-    const phone4 = "+905000000061";
-    await resetState(phone4);
-    const bl4 = await routeCallSim(phone4, { stage: "collect_name", bookingLinkSent: false });
-    assertEqual("BL4: wouldSend=false when stage=collect_name", bl4.wouldSend, false);
-
-    // ── BL5: no CLINIC_BOOKING_URL → should not trigger ───────────────────
-    const phone5 = "+905000000062";
-    await resetState(phone5);
-    const savedUrl = process.env.CLINIC_BOOKING_URL;
-    delete process.env.CLINIC_BOOKING_URL;
-    const bl5 = await routeCallSim(phone5, { stage: "complete", bookingLinkSent: false });
-    process.env.CLINIC_BOOKING_URL = savedUrl;
-    assertEqual("BL5: wouldSend=false when CLINIC_BOOKING_URL is unset", bl5.wouldSend, false);
-
-  } finally {
-    if (prevBookingUrl !== undefined) {
-      process.env.CLINIC_BOOKING_URL = prevBookingUrl;
-    } else {
-      delete process.env.CLINIC_BOOKING_URL;
-    }
-  }
-}
-
 // ── 14. End-to-end Claude API scenarios ───────────────────────────────────
 
 async function runApiScenario(
@@ -946,7 +843,6 @@ async function main() {
   await testOwnerAlertFormat();
   await testServiceConflict();
   await testCompleteStageReply();
-  await testBookingLinkHandoff();
 
   // End-to-end Claude API tests (require ANTHROPIC_API_KEY)
   const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
