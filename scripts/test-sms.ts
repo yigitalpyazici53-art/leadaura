@@ -595,7 +595,54 @@ async function testLeadScoreMultiTurn(): Promise<void> {
   assertDefined("accumulated phone", state.phone);
 }
 
-// ── 13. Demo scenario tests ───────────────────────────────────────────────
+// ── 13. English slot extractor tests ─────────────────────────────────────
+
+function testEnglishSlotExtractor(): void {
+  header("Slot extractor: English production messages");
+
+  // E1: Price inquiry for full-body laser
+  const e1 = extractSlots("Hi, how much is full-body laser?");
+  assertContains("e1: service is laser hair removal", e1.service ?? "", "laser hair removal");
+  assertContains("e1: treatmentArea is full body", e1.treatmentArea ?? "", "full body");
+  if (e1.priceInquired) {
+    pass("e1: priceInquired=true");
+  } else {
+    fail("e1: priceInquired should be true", "was falsy");
+  }
+  if (e1.leadScore !== "cold") {
+    pass("e1: leadScore is not cold", e1.leadScore ?? "undefined");
+  } else {
+    fail("e1: leadScore should not be cold", `got "${e1.leadScore}"`);
+  }
+
+  // E2: First-time + day + time-of-day
+  const e2 = extractSlots("It would be my first time. Saturday afternoon works.");
+  if (e2.firstTimeLaser === true) {
+    pass("e2: firstTimeLaser=true");
+  } else {
+    fail("e2: firstTimeLaser should be true", `got "${e2.firstTimeLaser}"`);
+  }
+  assertEqual("e2: preferredDate=saturday", e2.preferredDate, "saturday");
+  assertEqual("e2: preferredTime=afternoon", e2.preferredTime, "afternoon");
+
+  // E3: Name + international phone
+  const e3 = extractSlots("Zeynep, +44 7700 900123");
+  assertDefined("e3: name defined", e3.name);
+  if (e3.name) {
+    assertContains("e3: name includes Zeynep", e3.name, "Zeynep");
+  }
+  assertDefined("e3: phone defined", e3.phone);
+  if (e3.phone) {
+    const normalized = normalizePhone(e3.phone);
+    if (normalized.startsWith("+44")) {
+      pass("e3: phone extracted as international number", normalized);
+    } else {
+      fail("e3: phone extracted as international number", `got "${normalized}"`);
+    }
+  }
+}
+
+// ── 14. Demo scenario tests (Turkish) ────────────────────────────────────
 
 function testDemoScenarios(): void {
   header("Demo scenario tests: laser/aesthetic lead extraction");
@@ -733,6 +780,7 @@ async function main() {
   await testStateTtlExpiry();
   testLeadScores();
   await testLeadScoreMultiTurn();
+  testEnglishSlotExtractor();
   testDemoScenarios();
   await testPrompt();
   await testOwnerAlertFormat();

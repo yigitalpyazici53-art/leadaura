@@ -16,9 +16,9 @@ export interface ExtractedSlots {
   leadScore?: LeadScore;
 }
 
-// Turkish mobile number: starts with 05xx or +905xx
+// Turkish mobile: 05xx or +905xx. International fallback: +CC … (non-Turkish).
 const PHONE_PATTERN =
-  /(?:\+90|0)[\s\-]?(?:5\d{2})[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}/;
+  /(?:\+90|0)[\s\-]?(?:5\d{2})[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}|\+(?!90)\d[\d\s\-]{6,13}\d/;
 
 // Turkish day and date patterns — order matters: specific before generic
 const DATE_PATTERNS: RegExp[] = [
@@ -27,6 +27,9 @@ const DATE_PATTERNS: RegExp[] = [
   /\b(bugün|bu gün|yarın|öbür gün|öbürgün)\b/i,
   /\b(pazartesi|salı|çarşamba|perşembe|cuma|cumartesi|pazar)\b/i,
   /\bbu hafta\b/i,
+  // English
+  /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i,
+  /\b(today|tomorrow)\b/i,
 ];
 
 const TIME_PATTERNS: RegExp[] = [
@@ -35,6 +38,8 @@ const TIME_PATTERNS: RegExp[] = [
   // No \b around Turkish chars (ö, ğ not in \w): reorder longer before shorter to avoid partial match
   /(sabah erken|öğleden sonra|öğle|akşam üstü|akşam|gece yarısı|gece)/i,
   /(sabah|öğleden sonra|öğle|akşam)/i,
+  // English — longer phrases first
+  /\b(early morning|late afternoon|afternoon|morning|evening|night)\b/i,
 ];
 
 const URGENCY_PATTERNS: Array<[RegExp, UrgencyLevel]> = [
@@ -45,6 +50,10 @@ const URGENCY_PATTERNS: Array<[RegExp, UrgencyLevel]> = [
 
 // Laser/aesthetic service patterns — most specific first.
 const SERVICE_PATTERNS: Array<[RegExp, string]> = [
+  // English (laser ≠ lazer — no conflict with Turkish)
+  [/laser\s+hair\s+removal/i, "laser hair removal"],
+  [/\blaser\b/i, "laser hair removal"],
+  // Turkish
   [/lazer\s+epilasyon|epilasyon|lazer/i, "lazer epilasyon"],
   [/botoks?|dolgu|filler/i, "estetik uygulama"],
   [/cilt\s+bak|yüz\s+bak|facial/i, "cilt bakımı"],
@@ -53,7 +62,8 @@ const SERVICE_PATTERNS: Array<[RegExp, string]> = [
 
 // Body-area patterns for laser epilasyon — most specific first.
 const TREATMENT_AREA_PATTERNS: Array<[RegExp, string]> = [
-  [/tüm\s+vücut|full\s+body/i, "tüm vücut"],
+  [/tüm\s+vücut/i, "tüm vücut"],
+  [/full[\s\-]body/i, "full body"],
   [/koltuk\s*alt[ıi]/i, "koltuk altı"],
   [/bikini/i, "bikini"],
   [/bıyık|dudak\s*üst[üu]|üst\s*dudak/i, "dudak üstü"],
@@ -88,6 +98,10 @@ const FIRST_TIME_TRUE_PATTERNS: RegExp[] = [
   /başlama[dm][ıi][mn]?/i,
   /yaptırmadım/i,
   /hiç\s+denemedim/i,
+  // English
+  /\bfirst\s+time\b/i,
+  /\bfirst\s+visit\b/i,
+  /\bnever\s+(?:done|had|been)\b/i,
 ];
 
 // Price / package inquiry signals.
@@ -101,6 +115,11 @@ const PRICE_INQUIRY_PATTERNS: RegExp[] = [
   /indirim/i,
   /ödeme/i,
   /tutar/i,
+  // English
+  /how\s+much/i,
+  /\bprice\b/i,
+  /\bcost\b/i,
+  /\brate\b/i,
 ];
 
 // Known Istanbul districts and common Turkish cities for fallback location matching
@@ -151,6 +170,8 @@ const NAME_PATTERNS: RegExp[] = [
   /(?:[İi]sim|[Aa]d(?:ım)?)\s*:\s*([A-ZÇĞİÖŞÜa-zçğışöüI][A-Za-zÇĞİÖŞÜçğışöü]*)/,
   /\b(?:ben|benim adım|ismim|adım)\s+([A-ZÇĞİÖŞÜa-zçğışöüI]{2,}(?:\s+[A-ZÇĞİÖŞÜa-zçğışöüI]{2,})?)\b/i,
   /^([A-ZÇĞİÖŞÜ][a-zçğışöü]{1,}(?:\s+[A-ZÇĞİÖŞÜ][a-zçğışöü]{1,})?)\s+(?:olarak|aradım|yazıyorum|merhaba)\b/,
+  // "Name, +phone" — comma followed by '+' makes this specific enough to avoid service-term false positives
+  /^([A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]{1,}(?:\s+[A-ZÇĞİÖŞÜ][A-Za-zÇĞİÖŞÜçğışöü]{1,})?)\s*,\s*\+/,
 ];
 
 // Words that must not be mistaken for a Turkish name in the bare-word fallback
