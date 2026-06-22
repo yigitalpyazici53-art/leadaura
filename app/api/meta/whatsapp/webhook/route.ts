@@ -156,6 +156,18 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   }
 
+  // ── Booking link handoff ────────────────────────────────────────────────────
+  const bookingUrl = process.env.CLINIC_BOOKING_URL;
+  if (bookingUrl && result.stateAfter.stage === "complete" && !result.stateAfter.bookingLinkSent) {
+    try {
+      await sendWhatsAppText(from, `You can complete your appointment request here: ${bookingUrl}`);
+      await updateState(from, { bookingLinkSent: true });
+      console.log("[WhatsApp Webhook] booking link sent");
+    } catch (err) {
+      console.error("[WhatsApp Webhook] Booking link send failed:", err instanceof Error ? err.message : err);
+    }
+  }
+
   // ── Owner notification ──────────────────────────────────────────────────────
   if (result.shouldNotifyOwner) {
     try {

@@ -261,7 +261,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     console.log("[OwnerAlert] skipped");
   }
 
-  // ── 9. Log to Google Sheets — fire-and-forget ────────────────────────────
+  // ── 9. Booking link handoff ──────────────────────────────────────────────
+  const bookingUrl = process.env.CLINIC_BOOKING_URL;
+  if (bookingUrl && state.stage === "complete" && !state.bookingLinkSent) {
+    try {
+      await sendSms(from, `Complete your appointment request here: ${bookingUrl}`);
+      await updateState(from, { bookingLinkSent: true });
+      console.log("[Webhook] booking link sent");
+    } catch (err) {
+      console.error("[Webhook] Booking link send failed:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  // ── 10. Log to Google Sheets — fire-and-forget ────────────────────────────
   logToSheet({
     createdAt: new Date().toISOString(),
     source: state.source ?? "sms",
@@ -284,7 +296,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     );
   });
 
-  // ── 10. Return empty TwiML ───────────────────────────────────────────────
+  // ── 11. Return empty TwiML ───────────────────────────────────────────────
   console.log("[Webhook] done");
   return new NextResponse(EMPTY_TWIML, {
     status: 200,

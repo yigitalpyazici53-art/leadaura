@@ -30,6 +30,7 @@ export interface ConversationState {
   ownerAlertedHighUrgency?: boolean;
   ownerAlertedComplete?: boolean;
   sheetLoggedComplete?: boolean;
+  bookingLinkSent?: boolean;
 }
 
 const KEY_PREFIX = "conv:";

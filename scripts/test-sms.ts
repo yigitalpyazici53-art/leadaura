@@ -365,6 +365,12 @@ async function testConversationState(): Promise<void> {
     `  Final state: treatmentArea=${state.treatmentArea} date=${state.preferredDate} name=${state.name} stage=${getNextStage(state)}`
   );
   pass("all stages traversed: collect_treatment_area -> collect_datetime -> collect_name -> complete");
+
+  // bookingLinkSent flag can be stored and retrieved on ConversationState
+  state = await updateState(phone, { bookingLinkSent: true });
+  assertEqual("bookingLinkSent can be set to true", state.bookingLinkSent, true);
+  state = await updateState(phone, { bookingLinkSent: false });
+  assertEqual("bookingLinkSent can be updated to false", state.bookingLinkSent as boolean | undefined, false);
 }
 
 // ── 6. updateState undefined-filter test ─────────────────────────────────
