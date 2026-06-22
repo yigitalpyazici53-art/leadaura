@@ -48,6 +48,7 @@ import {
   _setStateForTest,
 } from "../lib/conversationState";
 import { extractSlots, detectConflict, calculateLeadScoreFromState } from "../lib/slotExtractor";
+import { processInboundMessage } from "../lib/inboundPipeline";
 import { classifyIntent } from "../lib/classifyIntent";
 import { buildSystemPrompt } from "../lib/prompt";
 
@@ -700,6 +701,49 @@ function testDemoScenarios(): void {
   }
 }
 
+// ── 15. Complete-stage deterministic reply ────────────────────────────────
+
+async function testCompleteStageReply(): Promise<void> {
+  header("Complete-stage deterministic reply (no Claude call)");
+
+  const phone = "+905000000050";
+  await resetState(phone);
+
+  // Pre-populate state to collect_name stage so only name/phone are missing.
+  // This avoids making Claude API calls for the earlier turns.
+  await _setStateForTest(phone, {
+    stage: "collect_name",
+    service: "laser hair removal",
+    treatmentArea: "full body",
+    preferredDate: "saturday",
+    preferredTime: "afternoon",
+    firstTimeLaser: true,
+    history: [
+      { role: "user", content: "Hi, how much is full-body laser?" },
+      { role: "assistant", content: "Which day and time would work best for you?" },
+      { role: "user", content: "It would be my first time. Saturday afternoon works." },
+      { role: "assistant", content: "Could I please take your name and phone number?" },
+    ],
+    lastUpdated: Date.now(),
+  });
+
+  // Send name + international phone — pipeline should reach complete and return deterministic reply
+  const result = await processInboundMessage({ from: phone, body: "Zeynep, +44 7700 900123" });
+  const reply = result.assistantReply;
+
+  console.log(`  Stage: ${result.stateAfter.stage}`);
+  console.log(`  Reply: "${reply}"`);
+
+  assertEqual("stage=complete after name+phone", result.stateAfter.stage, "complete");
+  assertNotContains("reply does not ask for clinic location", reply, "Which clinic location");
+  assertNotContains("reply has no question mark", reply, "?");
+  assertContains("reply contains 'appointment request'", reply, "appointment request");
+  assertContains("reply contains customer name", reply, "Zeynep");
+  assertContains("reply contains treatment area", reply, "full body");
+  assertNoProhibitedPhrases("complete reply", reply);
+  assertSms("complete reply fits SMS limit", reply);
+}
+
 // ── 14. End-to-end Claude API scenarios ───────────────────────────────────
 
 async function runApiScenario(
@@ -797,6 +841,7 @@ async function main() {
   await testPrompt();
   await testOwnerAlertFormat();
   await testServiceConflict();
+  await testCompleteStageReply();
 
   // End-to-end Claude API tests (require ANTHROPIC_API_KEY)
   const hasApiKey = !!process.env.ANTHROPIC_API_KEY;

@@ -42,6 +42,17 @@ export interface InboundMessageOptions {
   profileName?: string;
 }
 
+function buildCompleteReply(state: ConversationState): string {
+  const area = state.treatmentArea || state.service;
+  if (state.name && area) {
+    return `Thank you, ${state.name}. We received your appointment request for ${area}. Our clinic team will follow up shortly.`;
+  }
+  if (state.name) {
+    return `Thank you, ${state.name}. We received your appointment request. Our clinic team will follow up shortly.`;
+  }
+  return "Thank you. We received your appointment request. Our clinic team will follow up shortly.";
+}
+
 export async function processInboundMessage(
   options: InboundMessageOptions
 ): Promise<InboundPipelineResult> {
@@ -111,7 +122,9 @@ export async function processInboundMessage(
     }
     await addToHistory(from, "user", input);
 
-    if (process.env.ANTHROPIC_API_KEY) {
+    if (stateUpdated.stage === "complete") {
+      assistantReply = sanitizeSmsText(buildCompleteReply(stateUpdated));
+    } else if (process.env.ANTHROPIC_API_KEY) {
       try {
         assistantReply = await generateSmsReply(input, stateUpdated);
       } catch (err) {
