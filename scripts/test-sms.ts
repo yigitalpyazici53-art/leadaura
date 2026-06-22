@@ -533,11 +533,11 @@ async function testOwnerAlertFormat(): Promise<void> {
   assertContains("full alert has lazer epilasyon", alert2, "lazer epilasyon");
   assertContains("full alert has tüm vücut", alert2, "tüm vücut");
   assertContains("full alert has name Ayse", alert2, "Ayse");
-  assertContains("full alert has phone (Tel:)", alert2, "Tel:");
-  assertContains("full alert has first-time status", alert2, "Ilk kez");
-  assertContains("full alert has price inquiry", alert2, "Fiyat: Evet");
+  assertContains("full alert has phone (Phone:)", alert2, "Phone:");
+  assertContains("full alert has first-time status", alert2, "First time: Yes");
+  assertContains("full alert has price inquiry", alert2, "Price asked: Yes");
   assertContains("full alert has preferred date", alert2, "cumartesi");
-  assertContains("hot alert has Hizli donus yapilmali", alert2, "Hizli donus yapilmali");
+  assertContains("hot alert has ACTION line", alert2, "ACTION: Follow up ASAP");
 }
 
 // ── 11. Service conflict detection ────────────────────────────────────────

@@ -345,7 +345,7 @@ async function main() {
     assertDefined("owner alert non-empty", r1.ownerAlertPreview);
     assertContains("owner alert has [RF] prefix", r1.ownerAlertPreview, "[RF]");
     assertContains("owner alert has treatmentArea", r1.ownerAlertPreview, "tüm vücut");
-    assertContains("owner alert has price flag", r1.ownerAlertPreview, "Fiyat: Evet");
+    assertContains("owner alert has price flag", r1.ownerAlertPreview, "Price asked: Yes");
     console.log(`  alert preview:\n${r1.ownerAlertPreview.split("\n").map(l => "    " + l).join("\n")}`);
   }
 
@@ -387,9 +387,9 @@ async function main() {
   assertContains("T3: ownerAlert has HOT", mt3.ownerAlertPreview ?? "", "HOT");
   assertContains("T3: ownerAlert has treatmentArea", mt3.ownerAlertPreview ?? "", "tüm vücut");
   assertContains("T3: ownerAlert has Zeynep", mt3.ownerAlertPreview ?? "", "Zeynep");
-  assertContains("T3: ownerAlert has firstTimeLaser", mt3.ownerAlertPreview ?? "", "Ilk kez: Evet");
-  assertContains("T3: ownerAlert has price flag", mt3.ownerAlertPreview ?? "", "Fiyat: Evet");
-  assertContains("T3: ownerAlert has action", mt3.ownerAlertPreview ?? "", "Hizli donus");
+  assertContains("T3: ownerAlert has firstTimeLaser", mt3.ownerAlertPreview ?? "", "First time: Yes");
+  assertContains("T3: ownerAlert has price flag", mt3.ownerAlertPreview ?? "", "Price asked: Yes");
+  assertContains("T3: ownerAlert has action", mt3.ownerAlertPreview ?? "", "ACTION: Follow up ASAP");
 
   // ── Section 7: State storage mode diagnostics ────────────────────────────
   console.log("\n── 7. State storage mode diagnostics ──");
@@ -485,9 +485,9 @@ async function main() {
   if (dc1.ownerAlertPreview) {
     assertContains("DC/T3: ownerAlert has HOT", dc1.ownerAlertPreview, "HOT");
     assertContains("DC/T3: ownerAlert has treatmentArea", dc1.ownerAlertPreview, "tüm vücut");
-    assertContains("DC/T3: ownerAlert has firstTimeLaser", dc1.ownerAlertPreview, "Ilk kez: Evet");
-    assertContains("DC/T3: ownerAlert has Fiyat", dc1.ownerAlertPreview, "Fiyat: Evet");
-    assertContains("DC/T3: ownerAlert has action", dc1.ownerAlertPreview, "Hizli donus");
+    assertContains("DC/T3: ownerAlert has firstTimeLaser", dc1.ownerAlertPreview, "First time: Yes");
+    assertContains("DC/T3: ownerAlert has price flag", dc1.ownerAlertPreview, "Price asked: Yes");
+    assertContains("DC/T3: ownerAlert has action", dc1.ownerAlertPreview, "ACTION: Follow up ASAP");
   }
 
   // shouldLogToSheet logic

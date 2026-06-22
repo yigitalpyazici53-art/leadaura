@@ -31,35 +31,41 @@ export function buildOwnerAlert(
   const lines: string[] = [];
   lines.push(`[RF] ${customerFrom} | ${score}`);
 
-  // Service / treatment area line
-  const serviceParts: string[] = [];
-  if (state.service) serviceParts.push(state.service);
-  if (state.treatmentArea) serviceParts.push(`Bolge: ${state.treatmentArea}`);
-  if (serviceParts.length) lines.push(serviceParts.join(" | "));
+  // Source / stage line
+  const metaParts: string[] = [];
+  if (state.source) metaParts.push(`Source: ${state.source}`);
+  if (state.stage) metaParts.push(`Stage: ${state.stage}`);
+  if (metaParts.length) lines.push(metaParts.join(" | "));
+
+  // Service / treatment area
+  if (state.service) lines.push(`Service: ${state.service}`);
+  if (state.treatmentArea) lines.push(`Area: ${state.treatmentArea}`);
 
   // Contact line
   const contactParts: string[] = [];
-  if (state.name) contactParts.push(`Isim: ${state.name}`);
-  if (state.phone) contactParts.push(`Tel: ${state.phone}`);
+  if (state.name) contactParts.push(`Name: ${state.name}`);
+  if (state.phone) contactParts.push(`Phone: ${state.phone}`);
   if (contactParts.length) lines.push(contactParts.join(" | "));
 
   // Laser-specific signals
-  const laserParts: string[] = [];
+  const signalParts: string[] = [];
   if (state.firstTimeLaser !== undefined) {
-    laserParts.push(`Ilk kez: ${state.firstTimeLaser ? "Evet" : "Hayir"}`);
+    signalParts.push(`First time: ${state.firstTimeLaser ? "Yes" : "No"}`);
   }
-  if (state.priceInquired) laserParts.push("Fiyat: Evet");
-  if (laserParts.length) lines.push(laserParts.join(" | "));
+  if (state.priceInquired) signalParts.push("Price asked: Yes");
+  if (signalParts.length) lines.push(signalParts.join(" | "));
 
   // Timing
   const timeParts: string[] = [];
   if (state.preferredDate) timeParts.push(state.preferredDate);
   if (state.preferredTime) timeParts.push(state.preferredTime);
-  if (timeParts.length) lines.push(`Zaman: ${timeParts.join(" ")}`);
+  if (timeParts.length) lines.push(`Time: ${timeParts.join(" ")}`);
 
-  if (state.location) lines.push(`Konum: ${state.location}`);
+  if (state.location) lines.push(`Location: ${state.location}`);
+  if (state.urgency) lines.push(`Urgency: ${state.urgency}`);
+  if (state.notes) lines.push(`Notes: ${state.notes}`);
 
-  if (score === "HOT") lines.push("Hizli donus yapilmali");
+  if (score === "HOT") lines.push("ACTION: Follow up ASAP");
 
   return lines.join("\n");
 }
