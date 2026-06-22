@@ -744,6 +744,99 @@ async function testCompleteStageReply(): Promise<void> {
   assertSms("complete reply fits SMS limit", reply);
 }
 
+// ── 16. Booking link handoff guard (dry-run) ─────────────────────────────
+
+async function testBookingLinkHandoff(): Promise<void> {
+  header("Booking link handoff guard (dry-run, no real SMS sent)");
+
+  const testBookingUrl = "https://example.clinic/book";
+  const prevBookingUrl = process.env.CLINIC_BOOKING_URL;
+  process.env.CLINIC_BOOKING_URL = testBookingUrl;
+
+  try {
+    // ── Case 1: complete + bookingLinkSent=false → should trigger ──────────
+    const phone1 = "+905000000060";
+    await resetState(phone1);
+    await _setStateForTest(phone1, {
+      stage: "complete",
+      name: "Zeynep",
+      phone: phone1,
+      service: "laser hair removal",
+      treatmentArea: "full body",
+      preferredDate: "saturday",
+      preferredTime: "afternoon",
+      leadScore: "hot",
+      bookingLinkSent: false,
+      history: [],
+      lastUpdated: Date.now(),
+    });
+
+    let state1 = await getState(phone1);
+    assertEqual("BL1: stage=complete before guard", state1.stage, "complete");
+    assertEqual("BL1: bookingLinkSent=false before guard", state1.bookingLinkSent, false);
+
+    const url1 = process.env.CLINIC_BOOKING_URL;
+    const wouldSend1 = state1.stage === "complete" && !state1.bookingLinkSent && !!url1;
+    let dryRunMsg1: string | null = null;
+    if (wouldSend1) {
+      dryRunMsg1 = `Complete your appointment request here: ${url1}`;
+      await updateState(phone1, { bookingLinkSent: true });
+    }
+
+    assertEqual("BL1: wouldSend=true on first call", wouldSend1, true);
+    assertEqual(
+      "BL1: dryRunBookingMessage contains booking URL",
+      dryRunMsg1,
+      `Complete your appointment request here: ${testBookingUrl}`
+    );
+
+    state1 = await getState(phone1);
+    assertEqual("BL1: bookingLinkSent=true persisted in Redis after guard", state1.bookingLinkSent, true);
+
+    // ── Case 2: bookingLinkSent=true → idempotency (no second send) ────────
+    const state2 = await getState(phone1);
+    const wouldSend2 = state2.stage === "complete" && !state2.bookingLinkSent && !!process.env.CLINIC_BOOKING_URL;
+    assertEqual("BL2: wouldSend=false when already sent (idempotency)", wouldSend2, false);
+
+    // ── Case 3: stage≠complete → should not trigger ────────────────────────
+    const phone3 = "+905000000061";
+    await resetState(phone3);
+    await _setStateForTest(phone3, {
+      stage: "collect_name",
+      service: "laser hair removal",
+      treatmentArea: "full body",
+      bookingLinkSent: false,
+      history: [],
+      lastUpdated: Date.now(),
+    });
+    const state3 = await getState(phone3);
+    const wouldSend3 = state3.stage === "complete" && !state3.bookingLinkSent && !!process.env.CLINIC_BOOKING_URL;
+    assertEqual("BL3: wouldSend=false when stage=collect_name", wouldSend3, false);
+
+    // ── Case 4: no CLINIC_BOOKING_URL → should not trigger ────────────────
+    const phone4 = "+905000000062";
+    await resetState(phone4);
+    await _setStateForTest(phone4, {
+      stage: "complete",
+      service: "laser hair removal",
+      bookingLinkSent: false,
+      history: [],
+      lastUpdated: Date.now(),
+    });
+    const state4 = await getState(phone4);
+    const emptyUrl = "";
+    const wouldSend4 = state4.stage === "complete" && !state4.bookingLinkSent && !!emptyUrl;
+    assertEqual("BL4: wouldSend=false when CLINIC_BOOKING_URL is empty", wouldSend4, false);
+
+  } finally {
+    if (prevBookingUrl !== undefined) {
+      process.env.CLINIC_BOOKING_URL = prevBookingUrl;
+    } else {
+      delete process.env.CLINIC_BOOKING_URL;
+    }
+  }
+}
+
 // ── 14. End-to-end Claude API scenarios ───────────────────────────────────
 
 async function runApiScenario(
@@ -842,6 +935,7 @@ async function main() {
   await testOwnerAlertFormat();
   await testServiceConflict();
   await testCompleteStageReply();
+  await testBookingLinkHandoff();
 
   // End-to-end Claude API tests (require ANTHROPIC_API_KEY)
   const hasApiKey = !!process.env.ANTHROPIC_API_KEY;
