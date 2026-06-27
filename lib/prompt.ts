@@ -31,10 +31,8 @@ Rules:
 const NEXT_FIELD_PROMPT: Record<Stage, string> = {
   collect_treatment_area:
     `You don't know which area or service the customer wants yet. Ask which treatment area they are interested in. Example: 'Which area are you interested in for ${clinicConfig.primaryService}? (e.g. full body, legs, underarms, bikini)'`,
-  collect_first_time:
-    `You have the treatment area. Ask whether this is their first ${clinicConfig.primaryService} session. Example: 'Have you had ${clinicConfig.primaryService} before, or would this be your first time?'`,
   collect_datetime:
-    "You have the area and first-time info. Ask for their preferred day and time. Example: 'Which day and time would work best for you?'",
+    "You have the treatment area. Ask for their preferred day and time. Example: 'Which day and time would work best for you?'",
   collect_name:
     "The appointment request is nearly complete. Ask for their name and phone number. Example: 'Could I please take your name and phone number?'",
   complete:

@@ -140,7 +140,6 @@ function assertNotContains(label: string, haystack: string, needle: string) {
 
 const STAGE_FALLBACK: Record<string, string> = {
   collect_treatment_area: "Merhaba! Hangi bolge icin lazer epilasyon dusunuyorsunuz?",
-  collect_first_time:     "Daha once lazer epilasyon yaptirdiniz mi?",
   collect_datetime:       "Hangi gun ve saatte gelebilirsiniz?",
   collect_name:           "Adinizi ve telefon numaranizi alabilir miyim?",
   complete:               "Bilgilerinizi aldik. Merkezimiz sizi arayarak uygun zamani paylasacaktir.",

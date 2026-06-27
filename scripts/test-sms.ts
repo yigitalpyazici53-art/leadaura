@@ -781,7 +781,88 @@ async function testCompleteStageReply(): Promise<void> {
   assertSms("complete reply fits SMS limit", reply);
 }
 
-// ── 14. End-to-end Claude API scenarios ───────────────────────────────────
+// ── 14. Legacy collect_first_time state migration ─────────────────────────
+
+async function testLegacyStateMigration(): Promise<void> {
+  header("Legacy collect_first_time state migration");
+
+  // Case 1: treatmentArea set, no date → should normalize to collect_datetime
+  const phone1 = "+905000000070";
+  await resetState(phone1);
+  await _setStateForTest(phone1, {
+    // Use type assertion to simulate persisted data from before the cleanup.
+    stage: "collect_first_time" as unknown as "collect_treatment_area",
+    treatmentArea: "tüm vücut",
+    service: "lazer epilasyon",
+    history: [],
+    lastUpdated: Date.now(),
+  } as ConversationState);
+  const s1 = await getState(phone1);
+  assertEqual("legacy → collect_datetime (has area, no date)", s1.stage, "collect_datetime");
+  assertEqual("treatmentArea preserved", s1.treatmentArea, "tüm vücut");
+
+  // Case 2: treatmentArea + date set, no name → should normalize to collect_name
+  const phone2 = "+905000000071";
+  await resetState(phone2);
+  await _setStateForTest(phone2, {
+    stage: "collect_first_time" as unknown as "collect_treatment_area",
+    treatmentArea: "bacak",
+    service: "lazer epilasyon",
+    preferredDate: "cumartesi",
+    history: [],
+    lastUpdated: Date.now(),
+  } as ConversationState);
+  const s2 = await getState(phone2);
+  assertEqual("legacy → collect_name (has area+date, no name)", s2.stage, "collect_name");
+  assertEqual("preferredDate preserved", s2.preferredDate, "cumartesi");
+
+  // Case 3: all required slots set → should normalize to complete
+  const phone3 = "+905000000072";
+  await resetState(phone3);
+  await _setStateForTest(phone3, {
+    stage: "collect_first_time" as unknown as "collect_treatment_area",
+    treatmentArea: "koltuk altı",
+    service: "lazer epilasyon",
+    preferredDate: "cumartesi",
+    name: "Zeynep",
+    history: [],
+    lastUpdated: Date.now(),
+  } as ConversationState);
+  const s3 = await getState(phone3);
+  assertEqual("legacy → complete (all slots present)", s3.stage, "complete");
+
+  // Case 4: no slots at all → should normalize to collect_treatment_area
+  const phone4 = "+905000000073";
+  await resetState(phone4);
+  await _setStateForTest(phone4, {
+    stage: "collect_first_time" as unknown as "collect_treatment_area",
+    history: [],
+    lastUpdated: Date.now(),
+  } as ConversationState);
+  const s4 = await getState(phone4);
+  assertEqual("legacy → collect_treatment_area (no slots)", s4.stage, "collect_treatment_area");
+
+  // Case 5: legacy state does not get stuck — pipeline can continue from it
+  const phone5 = "+905000000074";
+  await resetState(phone5);
+  await _setStateForTest(phone5, {
+    stage: "collect_first_time" as unknown as "collect_treatment_area",
+    treatmentArea: "tüm vücut",
+    service: "lazer epilasyon",
+    history: [],
+    lastUpdated: Date.now(),
+  } as ConversationState);
+  const pipelineResult = await processInboundMessage({ from: phone5, body: "cumartesi öğleden sonra uygun olur" });
+  if (pipelineResult.stateAfter.stage === "collect_name" || pipelineResult.stateAfter.stage === "complete") {
+    pass("legacy state does not get stuck — pipeline continues normally", pipelineResult.stateAfter.stage);
+  } else {
+    fail("legacy state does not get stuck", `stage=${pipelineResult.stateAfter.stage}`);
+  }
+
+  pass("All legacy collect_first_time migration cases handled safely");
+}
+
+// ── 15. End-to-end Claude API scenarios ───────────────────────────────────
 
 async function runApiScenario(
   phone: string,
@@ -918,6 +999,7 @@ async function main() {
   await testServiceConflict();
   await testCompleteStageReply();
   await testClinicConfigNormalization();
+  await testLegacyStateMigration();
 
   // End-to-end Claude API tests (require ANTHROPIC_API_KEY)
   const hasApiKey = !!process.env.ANTHROPIC_API_KEY;

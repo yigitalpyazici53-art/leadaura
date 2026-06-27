@@ -15,7 +15,6 @@ import { clinicConfig } from "./clinicConfig";
 
 const STAGE_FALLBACK: Record<string, string> = {
   collect_treatment_area: `Hi! Which area are you interested in for ${clinicConfig.primaryService}?`,
-  collect_first_time:     `Have you had ${clinicConfig.primaryService} before, or would this be your first time?`,
   collect_datetime:       "Which day and time would work best for you?",
   collect_name:           "Could I please take your name and phone number?",
   complete:               "Thank you. We received your appointment request. Our team will follow up shortly.",
@@ -84,7 +83,6 @@ export async function processInboundMessage(
     const needFallback =
       noOtherSlots &&
       (stateBefore.stage === "collect_name" ||
-        stateBefore.stage === "collect_first_time" ||
         stateBefore.stage === "collect_datetime" ||
         stateBefore.history
           .slice(-2)

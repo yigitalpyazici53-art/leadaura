@@ -2,7 +2,6 @@ import { getRedis } from "./redis";
 
 export type Stage =
   | "collect_treatment_area"
-  | "collect_first_time"
   | "collect_datetime"
   | "collect_name"
   | "complete";
@@ -39,6 +38,26 @@ const STATE_TTL_MS = STATE_TTL_S * 1000;
 
 const memStore = new Map<string, ConversationState>();
 
+const VALID_STAGES: Stage[] = ["collect_treatment_area", "collect_datetime", "collect_name", "complete"];
+
+// Normalizes persisted stage values. Handles the legacy "collect_first_time" ghost stage
+// (which getNextStage() never returned) so old Redis keys do not get stuck.
+function normalizeLegacyStage(raw: Record<string, unknown>): Stage {
+  const s = String(raw.stage ?? "");
+  if (s === "collect_first_time") {
+    if (!raw.treatmentArea && !raw.service) return "collect_treatment_area";
+    if (!raw.preferredDate && !raw.preferredTime) return "collect_datetime";
+    if (!raw.name) return "collect_name";
+    return "complete";
+  }
+  return VALID_STAGES.includes(s as Stage) ? (s as Stage) : "collect_treatment_area";
+}
+
+function applyNorm(state: ConversationState): ConversationState {
+  const stage = normalizeLegacyStage(state as unknown as Record<string, unknown>);
+  return stage === (state.stage as string) ? state : { ...state, stage };
+}
+
 function freshState(): ConversationState {
   return { stage: "collect_treatment_area", history: [], lastUpdated: Date.now() };
 }
@@ -58,8 +77,8 @@ export async function readConversationState(phone: string): Promise<Conversation
   if (!r) return null;
   const raw = await r.get(getConversationKey(phone));
   if (raw === null || raw === undefined) return null;
-  if (typeof raw === "string") return JSON.parse(raw) as ConversationState;
-  return raw as ConversationState;
+  const parsed = (typeof raw === "string" ? JSON.parse(raw) : raw) as Record<string, unknown>;
+  return { ...(parsed as unknown as ConversationState), stage: normalizeLegacyStage(parsed) };
 }
 
 /**
@@ -84,15 +103,15 @@ export async function getState(phone: string): Promise<ConversationState> {
     try {
       const raw = await r.get(getConversationKey(phone));
       if (raw !== null && raw !== undefined) {
-        const stored: ConversationState =
-          typeof raw === "string" ? JSON.parse(raw) : (raw as ConversationState);
+        const parsed = (typeof raw === "string" ? JSON.parse(raw) : raw) as Record<string, unknown>;
+        const stored: ConversationState = { ...(parsed as unknown as ConversationState), stage: normalizeLegacyStage(parsed) };
         if (Date.now() - stored.lastUpdated < STATE_TTL_MS) return stored;
         console.log(`[State] Expired Redis state for ${phone} — resetting`);
       }
     } catch (err) {
       console.error("[State] Redis get failed, falling back to memory:", err instanceof Error ? err.message : err);
       const mem = memStore.get(phone);
-      if (mem && Date.now() - mem.lastUpdated < STATE_TTL_MS) return mem;
+      if (mem && Date.now() - mem.lastUpdated < STATE_TTL_MS) return applyNorm(mem);
     }
     // No valid Redis state — return fresh state without writing so getState()
     // is a pure read. updateState()/addToHistory() will write when needed.
@@ -101,7 +120,7 @@ export async function getState(phone: string): Promise<ConversationState> {
 
   const existing = memStore.get(phone);
   if (existing) {
-    if (Date.now() - existing.lastUpdated < STATE_TTL_MS) return existing;
+    if (Date.now() - existing.lastUpdated < STATE_TTL_MS) return applyNorm(existing);
     console.log(`[State] Expired state for ${phone} — resetting`);
   }
   const state = freshState();
