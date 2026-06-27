@@ -66,7 +66,6 @@ export function buildEmailText(summary: DailySummary): string {
     `Qualified leads:    ${summary.qualifiedLeads}`,
     `Hot leads:          ${summary.hotLeads}`,
     `After-hours leads:  ${summary.afterHoursLeads}`,
-    `Avg AI response:    under 60 seconds`,
     "",
   ];
 
@@ -132,10 +131,6 @@ ${summary.topLeads
     <tr>
       <td style="padding:6px 0;color:#6b7280">After-hours leads</td>
       <td style="padding:6px 0;font-weight:600;text-align:right">${summary.afterHoursLeads}</td>
-    </tr>
-    <tr>
-      <td style="padding:6px 0;color:#6b7280">Avg AI response</td>
-      <td style="padding:6px 0;font-weight:600;text-align:right">under 60 seconds</td>
     </tr>
   </table>
   ${emptyMsg}

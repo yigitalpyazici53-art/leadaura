@@ -13,17 +13,12 @@ import { generateSmsReply } from "./anthropic";
 import { buildOwnerAlert } from "./twilio";
 import { clinicConfig } from "./clinicConfig";
 
-const teamRef =
-  clinicConfig.name === "the clinic"
-    ? "Our clinic team"
-    : `The ${clinicConfig.name} team`;
-
 const STAGE_FALLBACK: Record<string, string> = {
   collect_treatment_area: `Hi! Which area are you interested in for ${clinicConfig.primaryService}?`,
   collect_first_time:     `Have you had ${clinicConfig.primaryService} before, or would this be your first time?`,
   collect_datetime:       "Which day and time would work best for you?",
   collect_name:           "Could I please take your name and phone number?",
-  complete:               `Thank you. We received your appointment request. ${teamRef} will follow up shortly.`,
+  complete:               "Thank you. We received your appointment request. Our team will follow up shortly.",
 };
 
 export interface InboundPipelineResult {
@@ -51,12 +46,15 @@ export interface InboundMessageOptions {
 function buildCompleteReply(state: ConversationState): string {
   const area = state.treatmentArea || state.service;
   if (state.name && area) {
-    return `Thank you, ${state.name}. We received your appointment request for ${area}. ${teamRef} will follow up shortly.`;
+    return `Thank you, ${state.name}. We received your appointment request for ${area}. Our team will follow up shortly.`;
   }
   if (state.name) {
-    return `Thank you, ${state.name}. We received your appointment request. ${teamRef} will follow up shortly.`;
+    return `Thank you, ${state.name}. We received your appointment request. Our team will follow up shortly.`;
   }
-  return `Thank you. We received your appointment request. ${teamRef} will follow up shortly.`;
+  if (area) {
+    return `Thank you. We received your appointment request for ${area}. Our team will follow up shortly.`;
+  }
+  return "Thank you. We received your appointment request. Our team will follow up shortly.";
 }
 
 export async function processInboundMessage(
