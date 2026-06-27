@@ -3,6 +3,8 @@ import { buildSystemPrompt } from "./prompt";
 import { sanitizeReplyText } from "./sanitize";
 import type { ConversationState } from "./conversationState";
 
+export const DEFAULT_MODEL = "claude-sonnet-4-6";
+
 // Lazy-initialized so the module can be imported before env vars are loaded
 let _client: Anthropic | null = null;
 function getClient(): Anthropic {
@@ -12,11 +14,20 @@ function getClient(): Anthropic {
   return _client;
 }
 
+export function getAnthropicModel(): string {
+  return process.env.ANTHROPIC_MODEL ?? DEFAULT_MODEL;
+}
+
 export async function generateSmsReply(
   customerMessage: string,
   state: ConversationState
 ): Promise<string> {
-  console.log("[Reply] generating (Claude)");
+  if (!process.env.ANTHROPIC_API_KEY) {
+    throw new Error("[Anthropic] ANTHROPIC_API_KEY is not set — AI replies are disabled");
+  }
+
+  const model = getAnthropicModel();
+  console.log(`[Reply] generating (Claude model: ${model})`);
 
   // Include recent conversation history for multi-turn context (last 6 turns)
   const messages: Anthropic.Messages.MessageParam[] = [
@@ -27,12 +38,19 @@ export async function generateSmsReply(
     { role: "user", content: customerMessage },
   ];
 
-  const response = await getClient().messages.create({
-    model: "claude-opus-4-7",
-    max_tokens: 256,
-    system: buildSystemPrompt(state),
-    messages,
-  });
+  let response: Anthropic.Messages.Message;
+  try {
+    response = await getClient().messages.create({
+      model,
+      max_tokens: 256,
+      system: buildSystemPrompt(state),
+      messages,
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`[Reply] AI generation failed (model: ${model}): ${msg}`);
+    throw err;
+  }
 
   const textBlock = response.content.find(
     (b): b is Anthropic.Messages.TextBlock => b.type === "text"

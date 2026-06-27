@@ -36,7 +36,7 @@ if (fs.existsSync(envFile)) {
 }
 
 // ── Now safe to import lib modules (client is lazy-initialized) ──────────
-import { generateSmsReply } from "../lib/anthropic";
+import { generateSmsReply, getAnthropicModel, DEFAULT_MODEL } from "../lib/anthropic";
 import { buildOwnerAlert, notifyOwner } from "../lib/twilio";
 import { sanitizeSmsText, SMS_MAX_CHARS } from "../lib/sanitize";
 import {
@@ -1061,6 +1061,74 @@ function testTreatmentAreaNormalization(): void {
   }
 }
 
+// ── Anthropic model configuration tests ──────────────────────────────────────
+
+async function testAnthropicModelConfig(): Promise<void> {
+  header("Anthropic model configuration");
+
+  // Test 1: ANTHROPIC_MODEL env var is respected
+  const savedModel = process.env.ANTHROPIC_MODEL;
+  process.env.ANTHROPIC_MODEL = "claude-test-sentinel-9999";
+  assertEqual("model comes from ANTHROPIC_MODEL when set", getAnthropicModel(), "claude-test-sentinel-9999");
+
+  // Test 2: default model is used when ANTHROPIC_MODEL is not set
+  delete process.env.ANTHROPIC_MODEL;
+  assertEqual("default model used when ANTHROPIC_MODEL missing", getAnthropicModel(), DEFAULT_MODEL);
+  if (DEFAULT_MODEL.startsWith("claude-")) {
+    pass("default model has expected claude- prefix", DEFAULT_MODEL);
+  } else {
+    fail("default model has expected claude- prefix", `got "${DEFAULT_MODEL}"`);
+  }
+
+  // Restore
+  if (savedModel !== undefined) process.env.ANTHROPIC_MODEL = savedModel;
+
+  // Test 3: missing ANTHROPIC_API_KEY throws a clear diagnostic from generateSmsReply
+  const savedKey3 = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+
+  const phone3 = "+905000000097";
+  await resetState(phone3);
+  const state3 = await getState(phone3);
+
+  let threw3 = false;
+  let errMsg3 = "";
+  try {
+    await generateSmsReply("test message", state3);
+    fail("generateSmsReply with no API key should throw", "no error was thrown");
+  } catch (err) {
+    threw3 = true;
+    errMsg3 = err instanceof Error ? err.message : String(err);
+  }
+
+  if (savedKey3 !== undefined) process.env.ANTHROPIC_API_KEY = savedKey3;
+
+  if (threw3 && errMsg3.includes("ANTHROPIC_API_KEY")) {
+    pass("missing ANTHROPIC_API_KEY throws with diagnostic message", errMsg3);
+  } else if (threw3) {
+    fail("missing ANTHROPIC_API_KEY throws with diagnostic message", `got: "${errMsg3}"`);
+  }
+
+  // Test 4: fallback returns a customer-safe reply when AI generation fails (no key)
+  const phone4 = "+905000000098";
+  await resetState(phone4);
+
+  const savedKey4 = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+
+  const result4 = await processInboundMessage({ from: phone4, body: "Merhaba lazer epilasyon fiyatı?" });
+  const fallbackReply = result4.assistantReply;
+
+  if (savedKey4 !== undefined) process.env.ANTHROPIC_API_KEY = savedKey4;
+
+  if (fallbackReply && fallbackReply.length > 0) {
+    pass("fallback reply is non-empty when ANTHROPIC_API_KEY missing", fallbackReply.slice(0, 60));
+  } else {
+    fail("fallback reply is non-empty when ANTHROPIC_API_KEY missing", "reply was empty");
+  }
+  assertSms("fallback reply passes SMS format check", fallbackReply);
+}
+
 // ── 16. End-to-end Claude API scenarios ───────────────────────────────────
 
 async function runApiScenario(
@@ -1201,6 +1269,7 @@ async function main() {
   await testHistoryLogging();
   await testLegacyStateMigration();
   testTreatmentAreaNormalization();
+  await testAnthropicModelConfig();
 
   // End-to-end Claude API tests (require ANTHROPIC_API_KEY)
   const hasApiKey = !!process.env.ANTHROPIC_API_KEY;

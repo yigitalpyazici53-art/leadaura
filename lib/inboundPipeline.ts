@@ -130,11 +130,13 @@ export async function processInboundMessage(
         assistantReply = await generateSmsReply(input, stateUpdated);
       } catch (err) {
         console.error("[Pipeline] Anthropic failed:", err instanceof Error ? err.message : err);
+        console.log(`[Pipeline] using static fallback reply (stage: ${stateUpdated.stage})`);
         assistantReply = sanitizeSmsText(
           STAGE_FALLBACK[stateUpdated.stage] ?? STAGE_FALLBACK.collect_treatment_area
         );
       }
     } else {
+      console.warn("[Pipeline] ANTHROPIC_API_KEY not set — using static fallback reply");
       assistantReply = sanitizeSmsText(
         STAGE_FALLBACK[stateUpdated.stage] ?? STAGE_FALLBACK.collect_treatment_area
       );
