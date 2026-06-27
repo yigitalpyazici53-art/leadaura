@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { processInboundMessage } from "@/lib/inboundPipeline";
 import { sendWhatsAppText } from "@/lib/metaWhatsApp";
@@ -68,9 +69,30 @@ export async function GET(req: NextRequest): Promise<NextResponse> {
 
 // ── POST — Incoming WhatsApp messages ────────────────────────────────────────
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  const appSecret = process.env.META_WHATSAPP_APP_SECRET;
+  if (!appSecret) {
+    console.error("[WhatsApp Webhook] META_WHATSAPP_APP_SECRET not configured");
+    return new NextResponse("Forbidden", { status: 403 });
+  }
+
+  const rawBody = await req.text();
+
+  const signature = req.headers.get("x-hub-signature-256") ?? "";
+  const expectedSig =
+    "sha256=" + crypto.createHmac("sha256", appSecret).update(rawBody).digest("hex");
+
+  const signaturesMatch =
+    signature.length === expectedSig.length &&
+    crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expectedSig));
+
+  if (!signaturesMatch) {
+    console.warn("[WhatsApp Webhook] Signature verification failed");
+    return new NextResponse("Forbidden", { status: 403 });
+  }
+
   let payload: MetaWebhookPayload;
   try {
-    payload = (await req.json()) as MetaWebhookPayload;
+    payload = JSON.parse(rawBody) as MetaWebhookPayload;
   } catch {
     console.error("[WhatsApp Webhook] Failed to parse JSON body");
     return NextResponse.json({ ok: false, error: "Invalid JSON" }, { status: 400 });
