@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "RandevuFlow — AI Customer Assistant for Laser & Aesthetic Clinics",
+  title: "RandevuFlow — WhatsApp Lead Response System for Premium Clinics",
   description:
-    "Turn WhatsApp price inquiries into appointment requests. AI-powered customer assistant for laser hair removal and aesthetic clinics.",
+    "Turn high-intent WhatsApp inquiries into qualified patient leads. RandevuFlow helps premium aesthetic clinics respond instantly, qualify each inquiry, and alert the team.",
 };
 
 export default function EnLayout({ children }: { children: React.ReactNode }) {

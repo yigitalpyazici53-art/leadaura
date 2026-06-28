@@ -71,48 +71,48 @@ function CheckList({ items, white }: { items: string[]; white?: boolean }) {
 }
 
 const pilotFeatures = [
-  "AI message flow setup",
-  "WhatsApp inquiry handling demo",
-  "Hot lead notification format",
-  "Basic lead logging",
+  "Custom WhatsApp conversation flow",
+  "Lead qualification & scoring",
+  "Hot-lead alert setup",
+  "Google Sheets lead logging",
   "7-day pilot support",
 ];
 
 const standardFeatures = [
-  "Custom clinic flow",
-  "Service/treatment qualification",
-  "Lead scoring",
-  "Owner/team notifications",
-  "Basic reporting",
+  "Custom clinic conversation flow",
+  "Treatment qualification",
+  "Lead scoring & prioritization",
+  "Owner & team notifications",
+  "Daily lead summary",
 ];
 
 const clinicFeatures = [
   "Custom workflows",
-  "Multi-location routing",
-  "Advanced CRM/Sheets setup",
+  "Multi-location lead routing",
+  "Advanced CRM & Sheets setup",
   "Priority support",
 ];
 
 const faqs = [
   {
     q: "Does it replace my staff?",
-    a: "No. It helps your team respond faster and qualify inquiries before human follow-up.",
+    a: "No. RandevuFlow handles the initial response and qualification. Your team reviews every lead and follows up directly — the patient relationship stays with your clinic.",
+  },
+  {
+    q: "Are appointment requests confirmed bookings?",
+    a: "No. RandevuFlow captures the request and contact details. Your team reviews the qualified lead and confirms the appointment with the patient directly.",
   },
   {
     q: "Does it give medical advice?",
-    a: "No. It only handles basic inquiry qualification and routes sensitive questions to the clinic team.",
+    a: "No. It only handles inquiry qualification and routes clinical or sensitive questions to your team.",
   },
   {
-    q: "Does it invent prices?",
-    a: "No. It avoids exact pricing unless the clinic provides approved pricing rules.",
-  },
-  {
-    q: "Can it work with Instagram and WhatsApp?",
-    a: "The pilot is designed around Instagram/WhatsApp inquiry workflows. Final setup depends on the clinic's current tools and approved integrations.",
+    q: "Does it mention pricing?",
+    a: "Only if the clinic provides approved pricing guidance. By default, it acknowledges the inquiry and routes pricing questions to your team.",
   },
   {
     q: "How fast can we start?",
-    a: "A pilot flow can usually be prepared in 1–2 days after the clinic provides service details and message examples.",
+    a: "A pilot flow can usually be prepared in 1–2 business days after the clinic provides service details and a few example messages.",
   },
 ];
 
@@ -192,12 +192,22 @@ export default function EnPage() {
 
         .how-it-works-grid {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
+          grid-template-columns: repeat(2, 1fr);
           gap: 1.5rem;
           margin-top: 2.5rem;
         }
         @media (max-width: 640px) {
           .how-it-works-grid { grid-template-columns: 1fr; }
+        }
+
+        .what-team-grid {
+          display: grid;
+          grid-template-columns: repeat(3, 1fr);
+          gap: 1.5rem;
+          margin-top: 2.5rem;
+        }
+        @media (max-width: 640px) {
+          .what-team-grid { grid-template-columns: 1fr; }
         }
 
         .collects-grid {
@@ -407,7 +417,7 @@ export default function EnPage() {
                 border: `1px solid ${C.tealBorder}`,
               }}
             >
-              Laser hair removal &amp; aesthetic clinics
+              Premium aesthetic &amp; med-spa clinics · Dubai · Istanbul · US
             </div>
 
             <h1
@@ -420,8 +430,7 @@ export default function EnPage() {
                 letterSpacing: "-0.03em",
               }}
             >
-              Turn WhatsApp price inquiries into appointment
-              requests.
+              Turn high-intent WhatsApp inquiries into qualified patient leads.
             </h1>
 
             <p
@@ -433,9 +442,9 @@ export default function EnPage() {
                 maxWidth: "520px",
               }}
             >
-              RandevuFlow is an AI customer assistant for laser and aesthetic
-              clinics. It replies instantly, qualifies the customer, and sends
-              your team a hot lead notification.
+              RandevuFlow helps premium clinics respond instantly, qualify each
+              inquiry, log the lead, and alert the team before the patient books
+              somewhere else.
             </p>
 
             <div
@@ -465,9 +474,10 @@ export default function EnPage() {
               }}
             >
               {[
-                "Instant replies",
-                "Hot lead notification",
-                "WhatsApp",
+                "Instant WhatsApp replies",
+                "Qualified patient inquiries",
+                "Hot-lead alerts",
+                "Daily lead summary",
               ].map((t) => (
                 <span
                   key={t}
@@ -697,7 +707,7 @@ export default function EnPage() {
               lineHeight: 1.25,
             }}
           >
-            Every unanswered price DM is a potential lead walking out the door.
+            Every unanswered price inquiry is a high-intent patient booking elsewhere.
           </h2>
           <p
             style={{
@@ -708,10 +718,9 @@ export default function EnPage() {
               maxWidth: "560px",
             }}
           >
-            Patients don&rsquo;t wait. While your team is busy with treatments,
-            potential clients are sending price inquiries on Instagram and
-            WhatsApp &mdash; and booking elsewhere when no one responds fast
-            enough.
+            High-intent patients don&rsquo;t wait. While your team is with a
+            patient, qualified inquiries arrive on WhatsApp &mdash; and book
+            elsewhere if no one responds within minutes.
           </p>
           <div
             style={{
@@ -722,9 +731,9 @@ export default function EnPage() {
             }}
           >
             {[
-              "Price DMs left on read",
-              "Unqualified leads wasting staff time",
-              "Inquiries missed during peak hours and weekends",
+              "High-intent inquiries left on read",
+              "Unqualified messages consuming staff time",
+              "Price inquiries missed during peak hours and weekends",
             ].map((p) => (
               <div
                 key={p}
@@ -788,24 +797,29 @@ export default function EnPage() {
               maxWidth: "500px",
             }}
           >
-            Even while your team is with a patient.
+            From first message to qualified lead — without staff involvement.
           </p>
           <div className="how-it-works-grid">
             {[
               {
                 n: "01",
-                title: "Customer messages on WhatsApp",
-                desc: "A price inquiry, appointment request, or general question arrives via WhatsApp.",
+                title: "Inquiry arrives on WhatsApp",
+                desc: "A high-intent patient asks about pricing, availability, or a specific treatment — on WhatsApp, in their own words.",
               },
               {
                 n: "02",
-                title: "RandevuFlow qualifies them instantly",
-                desc: "It collects treatment area, first-time status, preferred time, name, and contact — automatically.",
+                title: "Lead is qualified automatically",
+                desc: "RandevuFlow gathers treatment interest, first-time status, preferred time, and contact details — without staff involvement.",
               },
               {
                 n: "03",
-                title: "Your team receives a hot lead notification",
-                desc: "A ready appointment request with a customer summary and recommended next action is sent to your team.",
+                title: "Team receives a hot-lead alert",
+                desc: "A structured lead summary with qualification data and a recommended next action is delivered to your team instantly.",
+              },
+              {
+                n: "04",
+                title: "Daily summary sent to the owner",
+                desc: "At the end of each day, the clinic owner receives a full summary of all inquiries handled, lead scores, and outstanding follow-ups.",
               },
             ].map((step) => (
               <div
@@ -872,7 +886,7 @@ export default function EnPage() {
               color: C.text,
             }}
           >
-            See how a price inquiry becomes an appointment request.
+            See how a price inquiry becomes a qualified patient lead.
           </h2>
           <p
             style={{
@@ -1008,7 +1022,7 @@ export default function EnPage() {
                 letterSpacing: "0.06em",
               }}
             >
-              Extracted lead
+              Qualified lead
             </div>
             <div className="collects-grid" style={{ marginTop: 0 }}>
               {collectsItems.map(({ label, value }) => (
@@ -1108,6 +1122,83 @@ export default function EnPage() {
         </div>
       </section>
 
+      {/* What your team receives */}
+      <section>
+        <div
+          style={{ maxWidth: "960px", margin: "0 auto", padding: "5rem 2.5rem" }}
+        >
+          <h2
+            style={{
+              fontSize: "clamp(1.55rem, 3.2vw, 2.05rem)",
+              fontWeight: 800,
+              letterSpacing: "-0.025em",
+              marginBottom: "0.65rem",
+              color: C.text,
+            }}
+          >
+            What your team receives after every qualified inquiry
+          </h2>
+          <p
+            style={{
+              fontSize: "1rem",
+              color: C.textMuted,
+              lineHeight: 1.65,
+              maxWidth: "500px",
+            }}
+          >
+            RandevuFlow doesn&rsquo;t just reply. It captures, scores, and delivers.
+          </p>
+          <div className="what-team-grid">
+            {[
+              {
+                icon: "🔥",
+                title: "Instant hot-lead alert",
+                desc: "The moment a high-intent inquiry is qualified, your team receives a notification with the full lead summary and recommended next action.",
+              },
+              {
+                icon: "📋",
+                title: "Google Sheets lead log",
+                desc: "Every conversation is automatically logged with qualification data, lead score, and contact details — ready for your team to review and follow up.",
+              },
+              {
+                icon: "📊",
+                title: "Daily owner summary",
+                desc: "At the end of each day, the clinic owner receives a clear summary of all inquiries handled, leads scored, and outstanding follow-ups.",
+              },
+            ].map(({ icon, title, desc }) => (
+              <div
+                key={title}
+                style={{
+                  background: "#fff",
+                  border: `1px solid ${C.border}`,
+                  borderRadius: "16px",
+                  padding: "1.75rem 1.5rem",
+                }}
+              >
+                <div style={{ fontSize: "1.75rem", marginBottom: "0.85rem" }}>
+                  {icon}
+                </div>
+                <div
+                  style={{
+                    fontWeight: 700,
+                    fontSize: "1rem",
+                    marginBottom: "0.45rem",
+                    color: C.text,
+                  }}
+                >
+                  {title}
+                </div>
+                <div
+                  style={{ fontSize: "0.9rem", color: C.textMuted, lineHeight: 1.65 }}
+                >
+                  {desc}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+
       {/* What RandevuFlow collects */}
       <section>
         <div
@@ -1122,7 +1213,7 @@ export default function EnPage() {
               color: C.text,
             }}
           >
-            What RandevuFlow qualifies from every inquiry
+            What gets captured from every patient inquiry
           </h2>
           <p
             style={{
@@ -1133,17 +1224,17 @@ export default function EnPage() {
               marginBottom: "2rem",
             }}
           >
-            Before your team picks up the conversation, the customer is already
-            qualified.
+            Before your team picks up the conversation, the patient is already
+            qualified and logged.
           </p>
           <div className="collects-grid">
             {[
-              { icon: "💆", label: "Treatment area", desc: "Which body area or service they&rsquo;re asking about" },
-              { icon: "✨", label: "Service type", desc: "Laser hair removal, skin treatment, or other" },
-              { icon: "🆕", label: "First-time status", desc: "Whether this is a new or returning patient" },
-              { icon: "📅", label: "Preferred time", desc: "Day or time slot that works for them" },
-              { icon: "📱", label: "Name &amp; contact", desc: "Name and phone number for follow-up" },
-              { icon: "🔥", label: "Lead score", desc: "HOT, WARM, or COOL — so your team knows who to call first" },
+              { icon: "💆", label: "Treatment area", desc: "Which body area or specific treatment they&rsquo;re enquiring about" },
+              { icon: "✨", label: "Service of interest", desc: "Laser hair removal, aesthetic procedure, med-spa treatment, or other" },
+              { icon: "🆕", label: "New or returning patient", desc: "Whether this is a first-time or returning patient" },
+              { icon: "📅", label: "Preferred availability", desc: "Day, time, or date that works for them" },
+              { icon: "📱", label: "Name &amp; contact", desc: "Full name and phone number for your team to follow up" },
+              { icon: "🔥", label: "Lead score", desc: "HOT, WARM, or COOL — so your team knows exactly who to call first" },
             ].map(({ icon, label, desc }) => (
               <div
                 key={label}
@@ -1194,7 +1285,7 @@ export default function EnPage() {
               color: C.text,
             }}
           >
-            We&rsquo;re working with the first 3 clinics.
+            Currently accepting the first 3 founding clinics.
           </h2>
           <p
             style={{
@@ -1204,8 +1295,8 @@ export default function EnPage() {
               maxWidth: "500px",
             }}
           >
-            We set up the system in your real workflow. We evaluate results
-            together within 7 days.
+            We set up the system in your real WhatsApp workflow and evaluate
+            results together within 7 days.
           </p>
 
           <div className="pricing-grid">
@@ -1268,7 +1359,7 @@ export default function EnPage() {
                   marginBottom: "1.5rem",
                 }}
               >
-                Try the system, see the results.
+                Live in your real WhatsApp workflow. Results within 7 days.
               </div>
               <div style={{ marginBottom: "0.5rem" }}>
                 <div
@@ -1358,7 +1449,7 @@ export default function EnPage() {
                   marginBottom: "1.5rem",
                 }}
               >
-                For clinics ready to use the system consistently.
+                For clinics ready to use the system as part of daily operations.
               </div>
               <div style={{ marginBottom: "0.5rem" }}>
                 <div
@@ -1516,7 +1607,7 @@ export default function EnPage() {
               flexShrink: 0,
             }}
           />
-          Founding clinics receive hands-on setup and manual quality review.
+          Founding clinics receive hands-on setup, manual flow review, and direct access to the team.
         </div>
       </div>
 
@@ -1599,7 +1690,7 @@ export default function EnPage() {
               lineHeight: 1.2,
             }}
           >
-            Let&rsquo;s set up a free pilot demo for your clinic.
+            Ready to stop missing high-intent patients?
           </h2>
           <p
             style={{
@@ -1610,8 +1701,9 @@ export default function EnPage() {
               margin: "0 auto 2.25rem",
             }}
           >
-            Tell us about your services. We&rsquo;ll configure the flow and
-            test it together.
+            Apply for the founding clinic pilot. We&rsquo;ll configure the
+            flow, qualify your first inquiries together, and review results
+            within 7 days.
           </p>
           <a href={CONTACT_URL} className="btn-primary-lg">
             Apply for pilot
@@ -1651,11 +1743,11 @@ export default function EnPage() {
         }}
       >
         <div>
-          <strong style={{ color: "#e2e8f0" }}>RandevuFlow</strong> &mdash; AI
-          customer assistant for laser hair removal and aesthetic clinics.
+          <strong style={{ color: "#e2e8f0" }}>RandevuFlow</strong> &mdash;
+          WhatsApp lead response system for premium clinics.
         </div>
         <div style={{ marginTop: "0.5rem", fontSize: "0.8rem" }}>
-          WhatsApp &middot; Instant replies &middot; Hot lead notifications
+          Instant replies &middot; Lead qualification &middot; Hot-lead alerts &middot; Daily summary
         </div>
       </footer>
 
