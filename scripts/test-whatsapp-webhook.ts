@@ -489,6 +489,38 @@ async function main() {
   assertEqual("B4: resilient batch — skipped=1 (empty body)", resilientSkipped, 1);
   pass("B4: second message processed despite first being invalid");
 
+  // ── Section 8: Language switch — English history → Turkish message (bug repro) ──
+  // Real-world scenario: customer completed English flow, then writes in Turkish.
+  // Must NOT reply with English conflict message like "We were discussing ... earlier."
+  console.log("\n── 8. Language switch: English history → Turkish message (bug repro) ──");
+
+  const PHONE_LANG = "905551112420";
+  await resetStateForTest(PHONE_LANG);
+  await _setStateForTest(PHONE_LANG, {
+    stage: "collect_datetime",
+    service: "laser hair removal",
+    treatmentArea: "full body",
+    history: [
+      { role: "user", content: "Hi, I want full body laser hair removal." },
+      { role: "assistant", content: "Which day and time would work best for you?" },
+    ],
+    lastUpdated: Date.now(),
+  });
+
+  const langResult = await processInboundMessage({
+    from: PHONE_LANG,
+    body: "Merhaba, full body lazer fiyatı ne kadar?",
+    source: "whatsapp",
+  });
+
+  console.log(`  L1 reply: "${langResult.assistantReply.slice(0, 100)}${langResult.assistantReply.length > 100 ? "..." : ""}"`);
+
+  assertNotContains("L1: no English 'We were discussing'", langResult.assistantReply, "We were discussing");
+  assertNotContains("L1: no English 'Did you mean'", langResult.assistantReply, "Did you mean");
+  assertDefined("L1: reply non-empty", langResult.assistantReply);
+
+  await trySendWhatsApp(PHONE_LANG, langResult.assistantReply);
+
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");
   if (failures === 0) {

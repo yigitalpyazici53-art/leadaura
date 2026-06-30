@@ -1274,6 +1274,148 @@ function testWelcomePunctuation(): void {
   assertEqual(`c5: fallback reply without "Welcome to" is unchanged`, c5, fallbackReply);
 }
 
+// ── Language consistency tests ────────────────────────────────────────────
+
+async function testLanguageConsistency(): Promise<void> {
+  header("Language consistency: reply follows latest customer message language");
+
+  // Test 1: Turkish input → Turkish conflict reply
+  {
+    const stateA: ConversationState = {
+      stage: "collect_datetime",
+      treatmentArea: "bacak",
+      history: [],
+      lastUpdated: Date.now(),
+    };
+    const extractedA = extractSlots("Koltuk altı için randevu almak istiyorum.");
+    const conflictA = detectConflict(stateA, extractedA, "Koltuk altı için randevu almak istiyorum.");
+    if (conflictA) {
+      assertNotContains("TR area conflict: no English 'mentioned earlier'", conflictA, "mentioned");
+      assertNotContains("TR area conflict: no English 'did you mean'", conflictA, "did you mean");
+      assertContains("TR area conflict: contains Turkish 'daha'", conflictA.toLowerCase(), "daha");
+      assertSms("TR area conflict: fits SMS limit", conflictA);
+      console.log(`  [TR conflict]: "${conflictA}"`);
+    } else {
+      pass("TR area conflict: no conflict triggered (areas normalized to same)");
+    }
+  }
+
+  // Test 2: English input → English conflict reply
+  {
+    const stateB: ConversationState = {
+      stage: "collect_datetime",
+      treatmentArea: "bacak",
+      history: [],
+      lastUpdated: Date.now(),
+    };
+    const extractedB = extractSlots("I want full body laser please.");
+    const conflictB = detectConflict(stateB, extractedB, "I want full body laser please.");
+    if (conflictB) {
+      assertContains("EN area conflict: contains English 'earlier'", conflictB.toLowerCase(), "earlier");
+      assertNotContains("EN area conflict: no Turkish 'daha önce'", conflictB.toLowerCase(), "daha önce");
+      assertSms("EN area conflict: fits SMS limit", conflictB);
+      console.log(`  [EN conflict]: "${conflictB}"`);
+    } else {
+      pass("EN area conflict: no conflict triggered");
+    }
+  }
+
+  // Test 3: No false conflict — 'laser hair removal' and 'lazer epilasyon' are cross-language equivalents
+  {
+    const stateC: ConversationState = {
+      stage: "collect_datetime",
+      service: "laser hair removal",
+      treatmentArea: "full body",
+      history: [],
+      lastUpdated: Date.now(),
+    };
+    const msgC = "Merhaba, full body lazer fiyatı ne kadar?";
+    const extractedC = extractSlots(msgC);
+    const conflictC = detectConflict(stateC, extractedC, msgC);
+    if (conflictC === null) {
+      pass("no false conflict: 'laser hair removal' and 'lazer epilasyon' are cross-language equivalents");
+    } else {
+      fail("no false conflict for laser/lazer cross-language", `got: "${conflictC}"`);
+    }
+  }
+
+  // Test 4: No false conflict reversed — 'lazer epilasyon' then 'laser hair removal' message
+  {
+    const stateD: ConversationState = {
+      stage: "collect_datetime",
+      service: "lazer epilasyon",
+      treatmentArea: "full body",
+      history: [],
+      lastUpdated: Date.now(),
+    };
+    const msgD = "Full body laser hair removal price?";
+    const extractedD = extractSlots(msgD);
+    const conflictD = detectConflict(stateD, extractedD, msgD);
+    if (conflictD === null) {
+      pass("no false conflict reversed: 'lazer epilasyon' then English 'laser hair removal'");
+    } else {
+      fail("no false conflict reversed for laser/lazer", `got: "${conflictD}"`);
+    }
+  }
+
+  // Test 5: Prompt contains updated language rule and Turkish pricing
+  {
+    const phone = "+905000000099";
+    await resetState(phone);
+    const stateE = await getState(phone);
+    const prompt = buildSystemPrompt(stateE);
+    assertContains("prompt: 'latest customer message' language rule", prompt, "latest customer message");
+    assertContains("prompt: Turkish pricing response", prompt, "Fiyat bilgisi");
+    assertContains("prompt: English pricing response", prompt, "Pricing depends");
+    assertNotContains("prompt: no 'default to English' (now defaults to Turkish)", prompt, "default to English");
+  }
+
+  // Test 6: Pipeline — Turkish message after English history produces no English conflict
+  {
+    const phoneF = "+905000000091";
+    await resetState(phoneF);
+    await _setStateForTest(phoneF, {
+      stage: "collect_datetime",
+      service: "laser hair removal",
+      treatmentArea: "full body",
+      history: [
+        { role: "user", content: "Hi, I want full body laser hair removal." },
+        { role: "assistant", content: "Which day and time would work best for you?" },
+      ],
+      lastUpdated: Date.now(),
+    });
+    const resultF = await processInboundMessage({
+      from: phoneF,
+      body: "Merhaba, full body lazer fiyatı ne kadar?",
+    });
+    assertNotContains("pipeline TR after EN: no 'We were discussing'", resultF.assistantReply, "We were discussing");
+    assertNotContains("pipeline TR after EN: no 'Did you mean'", resultF.assistantReply, "Did you mean");
+    console.log(`  [TR after EN reply]: "${resultF.assistantReply.slice(0, 80)}"`);
+  }
+
+  // Test 7: Pipeline — English message after Turkish history produces no Turkish conflict
+  {
+    const phoneG = "+905000000092";
+    await resetState(phoneG);
+    await _setStateForTest(phoneG, {
+      stage: "collect_datetime",
+      service: "lazer epilasyon",
+      treatmentArea: "full body",
+      history: [
+        { role: "user", content: "Merhaba, tüm vücut lazer epilasyon için randevu almak istiyorum." },
+        { role: "assistant", content: "Hangi gün ve saat sizin için uygun?" },
+      ],
+      lastUpdated: Date.now(),
+    });
+    const resultG = await processInboundMessage({
+      from: phoneG,
+      body: "Full body laser hair removal — Saturday afternoon works for me.",
+    });
+    assertNotContains("pipeline EN after TR: no 'Daha önce'", resultG.assistantReply, "Daha önce");
+    console.log(`  [EN after TR reply]: "${resultG.assistantReply.slice(0, 80)}"`);
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -1303,6 +1445,7 @@ async function main() {
   await testLegacyStateMigration();
   testTreatmentAreaNormalization();
   testWelcomePunctuation();
+  await testLanguageConsistency();
   await testAnthropicModelConfig();
 
   // End-to-end Claude API tests (require ANTHROPIC_API_KEY)

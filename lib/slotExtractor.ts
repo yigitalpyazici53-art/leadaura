@@ -344,19 +344,50 @@ export function extractSlots(message: string): ExtractedSlots {
   return result;
 }
 
+/**
+ * Returns the likely language of a message.
+ * Turkish-specific characters (ğ, ı, İ, Ğ) are the strongest signal.
+ * Falls back to common Turkish keyword matching for ASCII-only messages.
+ */
+function detectMessageLanguage(message: string): "turkish" | "english" {
+  if (/[ğıİĞ]/.test(message)) return "turkish";
+  if (/\b(merhaba|lazer|epilasyon|fiyat|randevu|için|istiyorum|uygun|tamam|evet|teşekkür)\b/i.test(message)) return "turkish";
+  return "english";
+}
+
+// Canonical key shared by all cross-language laser service equivalents.
+const LASER_CANONICAL = "__laser__";
+const LASER_SERVICE_RE = /^(?:laser\s+hair\s+removal|lazer\s+epilasyon|epilasyon)$/i;
+
+function normalizeServiceCrossLang(service: string): string {
+  if (LASER_SERVICE_RE.test(service.trim())) return LASER_CANONICAL;
+  return service.toLowerCase();
+}
+
 export function detectConflict(
   state: ConversationState,
-  extracted: ExtractedSlots
+  extracted: ExtractedSlots,
+  latestMessage?: string
 ): string | null {
+  const lang = latestMessage ? detectMessageLanguage(latestMessage) : "english";
+
   if (state.treatmentArea && extracted.treatmentArea) {
     const stateNorm = normalizeTreatmentArea(state.treatmentArea);
     const extractedNorm = normalizeTreatmentArea(extracted.treatmentArea);
     if (stateNorm !== extractedNorm) {
+      if (lang === "turkish") {
+        return `Daha önce ${state.treatmentArea} bölgesi için bilgi almıştınız. Hangi bölgeyi kastediyorsunuz: ${extracted.treatmentArea} mi yoksa ${state.treatmentArea} mı?`;
+      }
       return `You mentioned ${state.treatmentArea} earlier. Which area did you mean: ${extracted.treatmentArea} or ${state.treatmentArea}?`;
     }
   }
-  if (state.service && extracted.service && state.service !== extracted.service) {
-    return `We were discussing ${state.service} earlier. Did you mean ${extracted.service} instead?`;
+  if (state.service && extracted.service) {
+    if (normalizeServiceCrossLang(state.service) !== normalizeServiceCrossLang(extracted.service)) {
+      if (lang === "turkish") {
+        return `Daha önce ${state.service} hakkında konuşmuştuk. ${extracted.service} mi demek istediniz?`;
+      }
+      return `We were discussing ${state.service} earlier. Did you mean ${extracted.service} instead?`;
+    }
   }
   return null;
 }

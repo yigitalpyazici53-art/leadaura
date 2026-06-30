@@ -102,7 +102,7 @@ export async function processInboundMessage(
     extractedSlots.service = clinicConfig.primaryService;
   }
 
-  const conflictQuestion = detectConflict(stateBefore, extractedSlots);
+  const conflictQuestion = detectConflict(stateBefore, extractedSlots, input);
 
   let assistantReply = "";
 
