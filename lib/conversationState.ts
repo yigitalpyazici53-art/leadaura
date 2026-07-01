@@ -2,9 +2,12 @@ import { getRedis } from "./redis";
 
 export type Stage =
   | "collect_treatment_area"
+  | "collect_qualification"
   | "collect_datetime"
   | "collect_name"
   | "complete";
+
+export type ServiceCategory = "laser" | "hair_transplant" | "dental" | "other";
 
 export type UrgencyLevel = "low" | "medium" | "high";
 export type LeadScore = "hot" | "warm" | "cold";
@@ -30,6 +33,19 @@ export interface ConversationState {
   ownerAlertedComplete?: boolean;
   sheetLoggedComplete?: boolean;
   bookingLinkSent?: boolean;
+  // Qualification fields
+  serviceCategory?: ServiceCategory;
+  travellingFromAbroad?: boolean;
+  estimatedGrafts?: number;
+  dentalTreatmentType?: string;
+  teethCountOrScope?: string;
+  treatmentTimeline?: string;
+  qualificationNotes?: string;
+  // Premium clinic capability signals
+  availabilityInquiry?: boolean;
+  deviceInquiry?: boolean;
+  preTreatmentInquiry?: boolean;
+  detectedLanguage?: string;
 }
 
 const KEY_PREFIX = "conv:";
@@ -38,7 +54,7 @@ const STATE_TTL_MS = STATE_TTL_S * 1000;
 
 const memStore = new Map<string, ConversationState>();
 
-const VALID_STAGES: Stage[] = ["collect_treatment_area", "collect_datetime", "collect_name", "complete"];
+const VALID_STAGES: Stage[] = ["collect_treatment_area", "collect_qualification", "collect_datetime", "collect_name", "complete"];
 
 // Normalizes persisted stage values. Handles the legacy "collect_first_time" ghost stage
 // (which getNextStage() never returned) so old Redis keys do not get stuck.
@@ -177,8 +193,21 @@ export async function addToHistory(
   }
 }
 
+// Returns true when the qualification question for this service category has been answered.
+// Skips the gate if date/time is already known (patient volunteered it early).
+function qualificationComplete(state: ConversationState): boolean {
+  const cat = state.serviceCategory;
+  if (!cat) return true;
+  if (state.preferredDate || state.preferredTime) return true;
+  if (cat === "laser") return state.firstTimeLaser !== undefined;
+  if (cat === "hair_transplant") return state.travellingFromAbroad !== undefined;
+  if (cat === "dental") return !!state.teethCountOrScope;
+  return true;
+}
+
 export function getNextStage(state: ConversationState): Stage {
   if (!state.treatmentArea && !state.service) return "collect_treatment_area";
+  if (!qualificationComplete(state)) return "collect_qualification";
   if (!state.preferredDate && !state.preferredTime) return "collect_datetime";
   if (!state.name) return "collect_name";
   return "complete";

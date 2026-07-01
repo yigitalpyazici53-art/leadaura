@@ -14,7 +14,8 @@ import { buildOwnerAlert } from "./twilio";
 import { clinicConfig } from "./clinicConfig";
 
 const STAGE_FALLBACK: Record<string, string> = {
-  collect_treatment_area: `Hi! Which area are you interested in for ${clinicConfig.primaryService}?`,
+  collect_treatment_area: `Hi! Which area or treatment are you interested in?`,
+  collect_qualification:  "To guide you better, could you share a bit more about what you're looking for?",
   collect_datetime:       "Which day and time would work best for you?",
   collect_name:           "Could I please take your name and phone number?",
   complete:               "Thank you. We received your appointment request. Our team will follow up shortly.",
@@ -79,10 +80,11 @@ export async function processInboundMessage(
   // no other slots were extracted from this message (guard) and either the stage expects
   // a name or the user appears to be volunteering one early.
   if (!extractedSlots.name) {
-    const noOtherSlots = Object.keys(extractedSlots).filter(k => k !== "leadScore").length === 0;
+    const noOtherSlots = Object.keys(extractedSlots).filter(k => k !== "leadScore" && k !== "detectedLanguage").length === 0;
     const needFallback =
       noOtherSlots &&
       (stateBefore.stage === "collect_name" ||
+        stateBefore.stage === "collect_qualification" ||
         stateBefore.stage === "collect_datetime" ||
         stateBefore.history
           .slice(-2)

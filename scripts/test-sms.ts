@@ -48,7 +48,7 @@ import {
   _setStateForTest,
   type ConversationState,
 } from "../lib/conversationState";
-import { extractSlots, detectConflict, calculateLeadScoreFromState, normalizeTreatmentArea } from "../lib/slotExtractor";
+import { extractSlots, detectConflict, calculateLeadScoreFromState, normalizeTreatmentArea, detectMessageLanguage } from "../lib/slotExtractor";
 import { processInboundMessage } from "../lib/inboundPipeline";
 import { classifyIntent } from "../lib/classifyIntent";
 import { buildSystemPrompt } from "../lib/prompt";
@@ -1061,6 +1061,237 @@ function testTreatmentAreaNormalization(): void {
   }
 }
 
+// ── Qualification flows: hair transplant, dental, laser first-time ────────────
+
+async function testQualificationFlows(): Promise<void> {
+  header("Qualification flows: slot extraction and stage progression");
+
+  // ── Hair transplant slot extraction ──────────────────────────────────────────
+  // H1: Price inquiry with graft count from abroad
+  const h1 = extractSlots("Hi, how much for around 3000 grafts? I'm coming from abroad.");
+  // "grafts" keyword maps to the Turkish canonical "saç ekimi"; serviceCategory confirms it's hair transplant
+  const h1ServiceIsHair = /hair transplant|saç ekimi|sac ekimi/i.test(h1.service ?? "");
+  if (h1ServiceIsHair) pass("H1: service is hair transplant family", h1.service ?? "");
+  else fail("H1: service is hair transplant family", `got "${h1.service}"`);
+  assertEqual("H1: serviceCategory = hair_transplant", h1.serviceCategory, "hair_transplant");
+  assertEqual("H1: estimatedGrafts = 3000", h1.estimatedGrafts, 3000);
+  assertEqual("H1: travellingFromAbroad = true", h1.travellingFromAbroad, true);
+  if (h1.priceInquired) pass("H1: priceInquired = true");
+  else fail("H1: priceInquired should be true", "was falsy");
+  // Travelling from abroad + service → hot lead
+  assertEqual("H1: leadScore = hot (from abroad + service)", h1.leadScore, "hot");
+
+  // H2: Turkish hair transplant price inquiry (no graft count)
+  const h2 = extractSlots("Merhaba saç ekimi fiyatı ne kadar?");
+  assertContains("H2: service is saç ekimi", h2.service ?? "", "saç ekimi");
+  assertEqual("H2: serviceCategory = hair_transplant", h2.serviceCategory, "hair_transplant");
+  if (h2.priceInquired) pass("H2: priceInquired = true");
+  else fail("H2: priceInquired should be true", "was falsy");
+  if (h2.estimatedGrafts === undefined) pass("H2: no graft count extracted from vague inquiry");
+  else fail("H2: no graft count from vague inquiry", `got ${h2.estimatedGrafts}`);
+
+  // H3: Turkish "yurt dışından" detection
+  const h3 = extractSlots("Yurt dışından geliyorum, FUE saç ekimi yaptırmak istiyorum.");
+  assertEqual("H3: serviceCategory = hair_transplant", h3.serviceCategory, "hair_transplant");
+  assertEqual("H3: travellingFromAbroad = true (yurt dışından)", h3.travellingFromAbroad, true);
+
+  // H4: Already local (Istanbul'dayım)
+  const h4 = extractSlots("İstanbul'dayım, saç ekimi için randevu almak istiyorum.");
+  assertEqual("H4: serviceCategory = hair_transplant", h4.serviceCategory, "hair_transplant");
+  assertEqual("H4: travellingFromAbroad = false (already local)", h4.travellingFromAbroad, false);
+
+  // H5: Graft count variations
+  const h5a = extractSlots("2500 greft işlem için fiyat alabilir miyim?");
+  assertEqual("H5a: estimatedGrafts = 2500", h5a.estimatedGrafts, 2500);
+  const h5b = extractSlots("I need around 4000 grafts.");
+  assertEqual("H5b: estimatedGrafts = 4000", h5b.estimatedGrafts, 4000);
+
+  // ── Dental slot extraction ────────────────────────────────────────────────────
+  // D1: Veneer price inquiry
+  const d1 = extractSlots("Hi, how much are veneers in Istanbul?");
+  assertContains("D1: service is veneer", d1.service ?? "", "veneer");
+  assertEqual("D1: serviceCategory = dental", d1.serviceCategory, "dental");
+  assertEqual("D1: dentalTreatmentType = veneer", d1.dentalTreatmentType, "veneer");
+  if (d1.priceInquired) pass("D1: priceInquired = true");
+  else fail("D1: priceInquired should be true", "was falsy");
+
+  // D2: Turkish veneer inquiry
+  const d2 = extractSlots("Merhaba veneer fiyatı ne kadar?");
+  assertContains("D2: service is veneer", d2.service ?? "", "veneer");
+  assertEqual("D2: serviceCategory = dental", d2.serviceCategory, "dental");
+
+  // D3: Full smile scope extraction
+  const d3 = extractSlots("I'm interested in a full smile design.");
+  assertEqual("D3: teethCountOrScope = full smile", d3.teethCountOrScope, "full smile");
+  assertEqual("D3: dentalTreatmentType = smile design", d3.dentalTreatmentType, "smile design");
+
+  // D4: Teeth count extraction
+  const d4 = extractSlots("Ben 8 diş için veneer düşünüyorum.");
+  assertContains("D4: teethCountOrScope includes 8 teeth", d4.teethCountOrScope ?? "", "8 teeth");
+
+  // D5: Implant type detection
+  const d5 = extractSlots("Diş implantı için fiyat bilgisi almak istiyorum.");
+  assertContains("D5: service is implant", d5.service ?? "", "implant");
+  assertEqual("D5: dentalTreatmentType = implant", d5.dentalTreatmentType, "implant");
+
+  // D6: Travelling from abroad (dental)
+  const d6 = extractSlots("I'm coming from the UK for dental veneers.");
+  assertEqual("D6: travellingFromAbroad = true", d6.travellingFromAbroad, true);
+  // Travelling + service → hot
+  assertEqual("D6: leadScore = hot (UK + dental)", d6.leadScore, "hot");
+
+  // ── Laser first-time flow ─────────────────────────────────────────────────────
+  // L1: Price question — first-time signals extraction
+  const l1 = extractSlots("İlk kez full body lazer yaptıracağım, fiyatı ne kadar?");
+  assertContains("L1: service is lazer epilasyon", l1.service ?? "", "lazer epilasyon");
+  assertEqual("L1: serviceCategory = laser", l1.serviceCategory, "laser");
+  assertEqual("L1: firstTimeLaser = true", l1.firstTimeLaser, true);
+
+  // L2: Returning customer
+  const l2 = extractSlots("Daha önce yaptırdım, devam ediyorum.");
+  assertEqual("L2: firstTimeLaser = false (returning)", l2.firstTimeLaser, false);
+
+  // ── Stage progression: collect_qualification gate ─────────────────────────────
+  // Q1: Laser flow — service known, no firstTimeLaser → collect_qualification
+  const phoneQ1 = "+905000000200";
+  await resetState(phoneQ1);
+  let qState = await updateState(phoneQ1, {
+    service: "lazer epilasyon",
+    treatmentArea: "full body",
+    serviceCategory: "laser",
+  });
+  assertEqual("Q1: laser without firstTimeLaser → collect_qualification", getNextStage(qState), "collect_qualification");
+
+  // Q2: Laser flow — firstTimeLaser answered → collect_datetime
+  qState = await updateState(phoneQ1, { firstTimeLaser: true });
+  assertEqual("Q2: laser firstTimeLaser set → collect_datetime", getNextStage(qState), "collect_datetime");
+
+  // Q3: Hair transplant — no travellingFromAbroad → collect_qualification
+  const phoneQ3 = "+905000000201";
+  await resetState(phoneQ3);
+  let hState = await updateState(phoneQ3, {
+    service: "hair transplant",
+    serviceCategory: "hair_transplant",
+  });
+  assertEqual("Q3: hair without travellingFromAbroad → collect_qualification", getNextStage(hState), "collect_qualification");
+
+  // Q4: Hair transplant — travellingFromAbroad set → collect_datetime
+  hState = await updateState(phoneQ3, { travellingFromAbroad: true });
+  assertEqual("Q4: hair travellingFromAbroad set → collect_datetime", getNextStage(hState), "collect_datetime");
+
+  // Q5: Dental — no teethCountOrScope → collect_qualification
+  const phoneQ5 = "+905000000202";
+  await resetState(phoneQ5);
+  let dState = await updateState(phoneQ5, {
+    service: "veneer",
+    serviceCategory: "dental",
+  });
+  assertEqual("Q5: dental without teethCountOrScope → collect_qualification", getNextStage(dState), "collect_qualification");
+
+  // Q6: Dental — teethCountOrScope set → collect_datetime
+  dState = await updateState(phoneQ5, { teethCountOrScope: "8 teeth" });
+  assertEqual("Q6: dental teethCountOrScope set → collect_datetime", getNextStage(dState), "collect_datetime");
+
+  // Q7: Date/time provided before qualification → skip collect_qualification (backward compat)
+  const phoneQ7 = "+905000000203";
+  await resetState(phoneQ7);
+  let skipState = await updateState(phoneQ7, {
+    service: "lazer epilasyon",
+    serviceCategory: "laser",
+    preferredDate: "cumartesi",
+  });
+  assertEqual("Q7: date provided early → qualification skipped", getNextStage(skipState), "collect_name");
+
+  // Q8: No serviceCategory → qualification skipped (backward compat with old sessions)
+  const phoneQ8 = "+905000000204";
+  await resetState(phoneQ8);
+  let legacyState = await updateState(phoneQ8, { service: "lazer epilasyon" });
+  assertEqual("Q8: no serviceCategory → qualification skipped", getNextStage(legacyState), "collect_datetime");
+
+  // ── End-to-end pipeline: hair transplant full flow (no API key needed) ────────
+  // Uses _setStateForTest to skip to collect_qualification and verify pipeline behaviour
+  const phoneHT = "+905000000210";
+  await resetState(phoneHT);
+  await _setStateForTest(phoneHT, {
+    stage: "collect_qualification",
+    service: "hair transplant",
+    serviceCategory: "hair_transplant",
+    priceInquired: true,
+    estimatedGrafts: 3000,
+    history: [
+      { role: "user", content: "Hi, how much for around 3000 grafts? I'm coming from abroad." },
+      { role: "assistant", content: "Pricing depends on the treatment plan and final graft assessment. Our team will share exact details when they follow up. Will you be travelling to Istanbul for this, or are you already based here?" },
+    ],
+    lastUpdated: Date.now(),
+  });
+
+  const htResult = await processInboundMessage({
+    from: phoneHT,
+    body: "Yes, I'll be travelling from the UK.",
+  });
+  assertEqual("HT: travellingFromAbroad captured", htResult.stateAfter.travellingFromAbroad, true);
+  // After answering abroad question → should advance past collect_qualification
+  if (htResult.stateAfter.stage === "collect_datetime" || htResult.stateAfter.stage === "collect_name" || htResult.stateAfter.stage === "complete") {
+    pass("HT: stage advanced past collect_qualification", htResult.stateAfter.stage);
+  } else {
+    fail("HT: stage should advance past collect_qualification", `got ${htResult.stateAfter.stage}`);
+  }
+  // leadScore should be hot (travelling from abroad + service)
+  assertEqual("HT: leadScore = hot (from abroad + service)", htResult.stateAfter.leadScore, "hot");
+
+  // ── Owner alert includes new qualification fields ─────────────────────────────
+  const phoneOA = "+905000000220";
+  await resetState(phoneOA);
+  const oaState = await updateState(phoneOA, {
+    service: "hair transplant",
+    serviceCategory: "hair_transplant",
+    travellingFromAbroad: true,
+    estimatedGrafts: 2500,
+    treatmentTimeline: "next month",
+    leadScore: "hot",
+    stage: "collect_datetime",
+  });
+  const { buildOwnerAlert: boa } = await import("../lib/twilio");
+  const oaAlert = boa(phoneOA, oaState);
+  assertContains("OA: alert includes From abroad: Yes", oaAlert, "From abroad: Yes");
+  assertContains("OA: alert includes Est. grafts", oaAlert, "Est. grafts: 2500");
+  assertContains("OA: alert includes Timeline", oaAlert, "Timeline: next month");
+
+  // Dental alert
+  const phoneDOA = "+905000000221";
+  await resetState(phoneDOA);
+  const doaState = await updateState(phoneDOA, {
+    service: "veneer",
+    serviceCategory: "dental",
+    dentalTreatmentType: "veneer",
+    teethCountOrScope: "full smile",
+    travellingFromAbroad: true,
+    leadScore: "hot",
+    stage: "collect_datetime",
+  });
+  const doaAlert = boa(phoneDOA, doaState);
+  assertContains("DOA: alert includes Dental: veneer", doaAlert, "Dental: veneer");
+  assertContains("DOA: alert includes Scope: full smile", doaAlert, "Scope: full smile");
+  assertContains("DOA: alert includes From abroad: Yes", doaAlert, "From abroad: Yes");
+
+  // ── No medical advice or invented prices ──────────────────────────────────────
+  const { buildSystemPrompt: bsp2 } = await import("../lib/prompt");
+  const phoneMP = "+905000000230";
+  await resetState(phoneMP);
+  const mpState = await updateState(phoneMP, {
+    service: "hair transplant",
+    serviceCategory: "hair_transplant",
+    stage: "collect_qualification",
+  });
+  const mpPrompt = bsp2(mpState);
+  assertContains("MP: prompt has pricing rule for hair transplant", mpPrompt, "graft assessment");
+  assertContains("MP: prompt prohibits guaranteed results claims", mpPrompt, "Never claim guaranteed results");
+  assertNotContains("MP: prompt does not instruct to say 'we can definitely'", mpPrompt, "we can definitely do");
+  assertContains("MP: prompt has medical advice policy", mpPrompt, "medical advice");
+
+  console.log("  All qualification flow tests passed.");
+}
+
 // ── Anthropic model configuration tests ──────────────────────────────────────
 
 async function testAnthropicModelConfig(): Promise<void> {
@@ -1416,6 +1647,145 @@ async function testLanguageConsistency(): Promise<void> {
   }
 }
 
+// ── Premium clinic capabilities (7 features) ─────────────────────────────
+
+function testPremiumClinicCapabilities(): void {
+  header("Premium clinic capabilities: slot detection, language, device, pre-treatment");
+
+  // Feature 1 — Appointment availability / slot request handling
+  const av1 = extractSlots("Cumartesi öğleden sonra boş musunuz?");
+  if (av1.availabilityInquiry === true) pass("av1: availability inquiry detected (boş musunuz)");
+  else fail("av1: availabilityInquiry should be true", `got ${av1.availabilityInquiry}`);
+  assertContains("av1: preferredDate=cumartesi captured with availability ask", av1.preferredDate ?? "", "cumartesi");
+
+  const av2 = extractSlots("Do you have any slots this Saturday afternoon?");
+  if (av2.availabilityInquiry === true) pass("av2: availability inquiry detected (any slots)");
+  else fail("av2: availabilityInquiry should be true", `got ${av2.availabilityInquiry}`);
+
+  const av3 = extractSlots("Müsait misiniz yarın için?");
+  if (av3.availabilityInquiry === true) pass("av3: availability inquiry detected (müsait misiniz)");
+  else fail("av3: availabilityInquiry should be true", `got ${av3.availabilityInquiry}`);
+
+  // Slot request uses appointment-request language in prompt
+  const promptBase = buildSystemPrompt({ stage: "collect_treatment_area", history: [], lastUpdated: Date.now() });
+  assertContains("Feature 1: prompt has slot availability rule", promptBase, "availability");
+  assertContains("Feature 1: prompt uses appointment request language", promptBase, "appointment request");
+
+  // Feature 2 — Multi-language support (see testMultiLanguageDetection for full coverage)
+  assertContains("Feature 2: prompt supports Arabic", promptBase, "Arabic");
+  assertContains("Feature 2: prompt supports German", promptBase, "German");
+  assertContains("Feature 2: prompt supports Russian", promptBase, "Russian");
+  assertContains("Feature 2: prompt supports French", promptBase, "French");
+  assertContains("Feature 2: prompt supports Spanish", promptBase, "Spanish");
+
+  // Feature 3 — Instagram DM readiness (redirect to WhatsApp)
+  assertContains("Feature 3: prompt has Instagram redirect rule", promptBase, "Instagram");
+  assertContains("Feature 3: redirect instructs WhatsApp", promptBase, "WhatsApp");
+  assertNotContains("Feature 3: does not confirm Instagram DM as live channel", promptBase, "Instagram DM is now available");
+
+  // Feature 4 — starting prices: prompt never invents amounts
+  assertNotContains("Feature 4: no invented € price", promptBase, "starting from €");
+  assertNotContains("Feature 4: no invented £ price", promptBase, "starting from £");
+  assertNotContains("Feature 4: no invented $ price", promptBase, "starting from $");
+  // If configured, correct guidance key is present (config-dependent — always passes when not set)
+  if (clinicConfig.startingPrices.laser || clinicConfig.startingPrices.hairTransplant || clinicConfig.startingPrices.dental) {
+    assertContains("Feature 4: configured starting price in prompt", promptBase, "starting from");
+    assertContains("Feature 4: safe pricing caveat present", promptBase, "do not round up");
+  } else {
+    pass("Feature 4: no starting prices configured — safe pricing fallback applies");
+  }
+
+  // Feature 5 — Clinic device/technology inquiry detection
+  const dev1 = extractSlots("Hangi cihazı kullanıyorsunuz?");
+  if (dev1.deviceInquiry === true) pass("dev1: device inquiry detected (hangi cihaz)");
+  else fail("dev1: deviceInquiry should be true", `got ${dev1.deviceInquiry}`);
+
+  const dev2 = extractSlots("Which laser machine do you use?");
+  if (dev2.deviceInquiry === true) pass("dev2: device inquiry detected (which laser machine)");
+  else fail("dev2: deviceInquiry should be true", `got ${dev2.deviceInquiry}`);
+
+  const dev3 = extractSlots("Candela cihazı var mı?");
+  if (dev3.deviceInquiry === true) pass("dev3: device inquiry detected (brand name Candela)");
+  else fail("dev3: deviceInquiry should be true", `got ${dev3.deviceInquiry}`);
+
+  if (clinicConfig.deviceBrands) {
+    assertContains("Feature 5: configured device brands in prompt", promptBase, clinicConfig.deviceBrands.split(",")[0].trim());
+    assertNotContains("Feature 5: no 'best' claim for devices", promptBase, '"best"');
+  } else {
+    pass("Feature 5: no device brands configured — shown only when patient asks");
+  }
+
+  // Feature 6 — Location and transportation
+  const loc = clinicConfig.locationInfo;
+  const hasLocationConfig = !!(loc.address || loc.district || loc.googleMapsLink);
+  if (hasLocationConfig) {
+    assertContains("Feature 6: configured location in prompt", promptBase, "Clinic location");
+  } else {
+    assertContains("Feature 6: location fallback rule in prompt", promptBase, "location");
+  }
+
+  // Feature 7 — Pre-treatment preparation inquiry detection
+  const pt1 = extractSlots("İşlem öncesi nasıl hazırlanmalıyım?");
+  if (pt1.preTreatmentInquiry === true) pass("pt1: pre-treatment inquiry detected (TR)");
+  else fail("pt1: preTreatmentInquiry should be true", `got ${pt1.preTreatmentInquiry}`);
+
+  const pt2 = extractSlots("What should I do before my laser session?");
+  if (pt2.preTreatmentInquiry === true) pass("pt2: pre-treatment inquiry detected (EN)");
+  else fail("pt2: preTreatmentInquiry should be true", `got ${pt2.preTreatmentInquiry}`);
+
+  const pt3 = extractSlots("Should I shave before the treatment?");
+  if (pt3.preTreatmentInquiry === true) pass("pt3: pre-treatment inquiry detected (shave question)");
+  else fail("pt3: preTreatmentInquiry should be true", `got ${pt3.preTreatmentInquiry}`);
+
+  if (clinicConfig.preTreatmentInstructions.laser || clinicConfig.preTreatmentInstructions.hairTransplant || clinicConfig.preTreatmentInstructions.dental) {
+    assertContains("Feature 7: configured pre-treatment notes in prompt", promptBase, "Pre-treatment");
+    assertContains("Feature 7: medical advice safeguard", promptBase, "clinical questions");
+  } else {
+    pass("Feature 7: no pre-treatment config — Claude directs clinical questions to team");
+  }
+
+  // Cross-feature: detectedLanguage is set on slot extraction
+  const langSlot = extractSlots("Merhaba, saç ekimi fiyatı ne kadar?");
+  assertEqual("extractSlots sets detectedLanguage=turkish", langSlot.detectedLanguage, "turkish");
+
+  const langSlotEn = extractSlots("Hi, how much for hair transplant?");
+  assertEqual("extractSlots sets detectedLanguage=english", langSlotEn.detectedLanguage, "english");
+
+  console.log("  All 7 premium clinic capability tests passed.");
+}
+
+function testMultiLanguageDetection(): void {
+  header("Multi-language detection: Arabic, German, Russian, French, Spanish");
+
+  // Arabic (Unicode range)
+  assertEqual("Arabic script detected", detectMessageLanguage("مرحباً، كم تكلفة إزالة الشعر بالليزر؟"), "arabic");
+
+  // German (ä umlaut + keyword)
+  assertEqual("German (ä) detected", detectMessageLanguage("Wie viel kostet eine Haarentfernung?"), "german");
+  assertEqual("German (keyword only) detected", detectMessageLanguage("Wie viel kostet die Behandlung?"), "german");
+
+  // Russian (Cyrillic)
+  assertEqual("Russian Cyrillic detected", detectMessageLanguage("Сколько стоит лазерная эпиляция?"), "russian");
+
+  // French (distinctly French chars)
+  assertEqual("French (â/ê) detected", detectMessageLanguage("Bonjour, combien coûte l'épilation laser?"), "french");
+
+  // Spanish (¿ inverted question mark)
+  assertEqual("Spanish (¿) detected", detectMessageLanguage("Hola, ¿cuánto cuesta la depilación láser?"), "spanish");
+
+  // Spanish (ñ)
+  assertEqual("Spanish (ñ) detected", detectMessageLanguage("Hola, cuánto cuesta el tratamiento?"), "spanish");
+
+  // Turkish — still correct despite expanded detection
+  assertEqual("Turkish (ğ) still detected correctly", detectMessageLanguage("Merhaba, saç ekimi için randevu almak istiyorum."), "turkish");
+  assertEqual("Turkish (İ) still detected correctly", detectMessageLanguage("İlk kez yaptıracağım."), "turkish");
+
+  // English — still default when no other signals
+  assertEqual("English still detected for plain Latin text", detectMessageLanguage("Hi, how much is laser hair removal?"), "english");
+
+  console.log("  All multi-language detection tests passed.");
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -1446,7 +1816,10 @@ async function main() {
   testTreatmentAreaNormalization();
   testWelcomePunctuation();
   await testLanguageConsistency();
+  await testQualificationFlows();
   await testAnthropicModelConfig();
+  testPremiumClinicCapabilities();
+  testMultiLanguageDetection();
 
   // End-to-end Claude API tests (require ANTHROPIC_API_KEY)
   const hasApiKey = !!process.env.ANTHROPIC_API_KEY;

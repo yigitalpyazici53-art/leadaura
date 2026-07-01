@@ -1,4 +1,6 @@
-import type { ConversationState, UrgencyLevel, LeadScore } from "./conversationState";
+import type { ConversationState, UrgencyLevel, LeadScore, ServiceCategory } from "./conversationState";
+
+export type MessageLanguage = "turkish" | "english" | "arabic" | "german" | "russian" | "french" | "spanish";
 
 export interface ExtractedSlots {
   name?: string;
@@ -14,6 +16,18 @@ export interface ExtractedSlots {
   source?: string;
   notes?: string;
   leadScore?: LeadScore;
+  // Qualification fields
+  serviceCategory?: ServiceCategory;
+  travellingFromAbroad?: boolean;
+  estimatedGrafts?: number;
+  dentalTreatmentType?: string;
+  teethCountOrScope?: string;
+  treatmentTimeline?: string;
+  // Premium clinic capability signals
+  availabilityInquiry?: boolean;
+  deviceInquiry?: boolean;
+  preTreatmentInquiry?: boolean;
+  detectedLanguage?: string;
 }
 
 // Turkish mobile: 05xx or +905xx. International fallback: +CC … (non-Turkish).
@@ -48,13 +62,27 @@ const URGENCY_PATTERNS: Array<[RegExp, UrgencyLevel]> = [
   [/\b(acele değil|acele yok|uygun olduğunda|ne zaman uygunsa|fırsat buldukça)\b/i, "low"],
 ];
 
-// Laser/aesthetic service patterns — most specific first.
+// Service patterns — most specific first. Hair transplant and dental before laser to avoid
+// false positives (e.g. "implant" must win over the generic "diş" fallback in dental).
 const SERVICE_PATTERNS: Array<[RegExp, string]> = [
-  // English (laser ≠ lazer — no conflict with Turkish)
+  // Hair transplant
+  [/hair\s*transplant/i, "hair transplant"],
+  [/saç\s*ekimi|sac\s*ekimi/i, "saç ekimi"],
+  [/\b(fue|fut)\b/i, "hair transplant"],
+  [/\bgrefts?\b|\bgreftler\b|\bgrafts?\b|\bgrft\b/i, "saç ekimi"],
+  // Dental — specific types first
+  [/smile\s*design|gülüş\s*(?:tasarım|dizayn)/i, "smile design"],
+  [/dental\s*implant|diş\s*implant/i, "implant"],
+  [/\bimplant\b/i, "implant"],
+  [/veneer|diş\s*kaplama?|porselen\s*diş/i, "veneer"],
+  [/diş\s*beyazlatma|teeth?\s*whiten|bleaching/i, "whitening"],
+  [/\bdiş\b|\bdental\b/i, "dental"],
+  // English laser (most specific first)
   [/laser\s+hair\s+removal/i, "laser hair removal"],
   [/\blaser\b/i, "laser hair removal"],
-  // Turkish
+  // Turkish laser
   [/lazer\s+epilasyon|epilasyon|lazer/i, "lazer epilasyon"],
+  // Other aesthetic
   [/botoks?|dolgu|filler/i, "estetik uygulama"],
   [/cilt\s+bak|yüz\s+bak|facial/i, "cilt bakımı"],
   [/masaj|terapi/i, "masaj"],
@@ -121,6 +149,102 @@ const PRICE_INQUIRY_PATTERNS: RegExp[] = [
   /\bcost\b/i,
   /\brate\b/i,
 ];
+
+// Graft count for hair transplant — captures the leading number before "greft/graft" (singular or plural)
+const GRAFT_COUNT_RE = /(\d[\d.,]*)\s*(?:greft(?:s|ler)?|grafts?|grft)/i;
+
+// Travelling from abroad vs already in Istanbul
+const TRAVELLING_ABROAD_PATTERNS: RegExp[] = [
+  /yurt\s*d[ıi]ş[ıi]ndan/i,
+  /abroad/i,
+  /(?:from|coming\s+from)\s+(?:the\s+)?(?:uk|usa|us|germany|france|italy|spain|netherlands|europe|overseas|outside)\b/i,
+  /travel(?:l?ing)?\s+from\s+(?:the\s+)?(?:uk|usa|us|germany|france|italy|spain|netherlands|europe|overseas|outside)\b/i,
+  /(?:coming|travelling|traveling|travel(?:l?ing)?)\s+to\s+istanbul/i,
+  // Turkish patterns — avoid \b around Turkish chars; use word-start context instead
+  /[İi]stanbul['']?[ae]\s*(?:geliyorum|geleceğim|geliyo)/i,
+  /seyahat\s+(?:ediyorum|edeceğim|edecek)/i,
+];
+
+const ALREADY_LOCAL_PATTERNS: RegExp[] = [
+  // Turkish İ — cannot use /i flag for dotted-I, explicit [İi] required
+  /[İi]stanbul['']?dayım/i,
+  /[İi]stanbul['']?da\s+(?:yaşıyor|oturuyor|bulun)/i,
+  /(?:zaten|halihazırda)\s+(?:[İi]stanbul|türkiye|burada)/i,
+  /(?:already|currently)\s+in\s+(?:istanbul|turkey)/i,
+  /\blocal\b/i,
+];
+
+// Dental treatment type — specific types only (generic "\bdiş\b" lives in SERVICE_PATTERNS)
+const DENTAL_TYPE_PATTERNS: Array<[RegExp, string]> = [
+  [/smile\s*design|gülüş\s*(?:tasarım|dizayn)/i, "smile design"],
+  [/dental\s*implant|diş\s*implant|\bimplant\b/i, "implant"],
+  [/veneer|diş\s*kaplama?|porselen\s*diş/i, "veneer"],
+  [/diş\s*beyazlatma|teeth?\s*whiten|bleaching/i, "whitening"],
+  [/ortodonti|braces|bracket/i, "orthodontics"],
+  [/diş\s*dolgu|filling/i, "filling"],
+];
+
+// Teeth count or treatment scope for dental flow
+const TEETH_SCOPE_PATTERNS: Array<[RegExp, ((m: RegExpMatchArray) => string) | string]> = [
+  [/full\s*smile(?:\s*design)?|tüm\s*(?:ağız|dişler?)/i, "full smile"],
+  [/(\d+)\s*(?:diş|tooth|teeth)/i, (m: RegExpMatchArray) => `${m[1]} teeth`],
+  [/(?:ön|front)\s*(?:dişler?|teeth)/i, "front teeth"],
+  [/(?:arka|back)\s*(?:dişler?|teeth)/i, "back teeth"],
+  [/(?:birkaç|a\s+few|some)\s*(?:diş|teeth)/i, "a few teeth"],
+];
+
+// Desired treatment timeline (month/date range signals, not a specific appointment day)
+const TIMELINE_PATTERNS: RegExp[] = [
+  /bu\s*ay(?!\s*için)|this\s*month/i,
+  /gelecek\s*ay|next\s*month/i,
+  /\d+\s*(?:hafta\s*(?:içinde|sonra)|weeks?\s*(?:from\s*now|later)?)/i,
+  /\d+\s*(?:ay\s*(?:içinde|sonra)|months?\s*(?:from\s*now|later)?)/i,
+  /bu\s*yaz|this\s*summer/i,
+  /bu\s*yıl|this\s*year/i,
+  /(?:en\s*kısa\s*sürede|asap|as\s*soon\s*as\s*possible)/i,
+];
+
+// Patient asking about open slots or appointment availability
+const AVAILABILITY_INQUIRY_PATTERNS: RegExp[] = [
+  /\bboş\s*(?:musunuz|mu|misiniz)\b/i,
+  /\bmüsait\s*(?:musunuz|misiniz|mi)\b/i,
+  /\brandevu\s+(?:var\s+mı|mevcut\s+mu|uygun\s+mu)\b/i,
+  /\b(?:açık\s+mı|çalışıyor\s+musunuz)\b/i,
+  /\b(?:available|any\s+slots?|slot\s+available)\b/i,
+  /\bdo\s+you\s+have\s+(?:any\s+)?(?:slots?|appointments?|openings?)\b/i,
+  /\bcan\s+I\s+(?:book|get|schedule)\s+(?:an?\s+)?appointment\b/i,
+];
+
+// Patient asking about clinic devices or technology brands
+const DEVICE_INQUIRY_PATTERNS: RegExp[] = [
+  /\bhangi\s+(?:cihaz|teknoloji|marka|sistem)\b/i,
+  /\b(?:cihaz|teknoloji)\s+(?:ne|nedir|kullanıyor(?:sunuz)?)\b/i,
+  /\b(?:which|what)\s+(?:\w+\s+)?(?:device|machine|technology|brand|equipment)\b/i,
+  /\b(?:alexandrite|diode|nd[:\s]?yag|soprano|candela|fotona|lumenis|zimmer)\b/i,
+];
+
+// Patient asking about pre-treatment preparation
+const PRE_TREATMENT_INQUIRY_PATTERNS: RegExp[] = [
+  /\bhazırlık\b/i,
+  /\b(?:nasıl|ne\s+şekilde)\s+hazırlanmalıyım\b/i,
+  /\b(?:işlem|seans|tedavi)\s+(?:öncesi|öncesinde)\b/i,
+  /\b(?:pre[- ]?treatment|before\s+(?:the\s+)?(?:session|treatment|appointment))\b/i,
+  /\bwhat\s+(?:should|do)\s+I\s+(?:do|prepare|avoid|know)\s+before\b/i,
+  /\b(?:should\s+I\s+shave|should\s+I\s+avoid|can\s+I\s+eat)\b/i,
+];
+
+/**
+ * Detects the high-level service category from a service name or treatment area string.
+ * Used to drive flow-specific qualification questions.
+ */
+export function detectServiceCategory(service: string, treatmentArea?: string): ServiceCategory {
+  const s = `${service} ${treatmentArea ?? ""}`.toLowerCase();
+  if (/hair\s*transplant|saç\s*ekimi|sac\s*ekimi|greft|graft|\bfue\b|\bfut\b/.test(s)) return "hair_transplant";
+  if (/implant|veneer|whitening|smile\s*design|beyazlatma|porselen|gülüş|diş\s*kaplama|\bdental\b/.test(s)) return "dental";
+  if (/\bdiş\b/.test(s)) return "dental";
+  if (/laser|lazer|epilasyon|botoks|dolgu|filler|cilt|estetik|facial/.test(s)) return "laser";
+  return "other";
+}
 
 // Known Istanbul districts and common Turkish cities for fallback location matching
 const KNOWN_LOCATIONS: Record<string, string> = {
@@ -254,6 +378,7 @@ function calculateLeadScore(slots: ExtractedSlots): LeadScore {
 
   if (isUrgent) return "hot";
   if (hasService && hasDateTime) return "hot";
+  if (slots.travellingFromAbroad && hasService) return "hot";
   if (slots.priceInquired && hasService) return "warm";
   if (hasService || hasDateTime) return "warm";
   return "cold";
@@ -276,6 +401,54 @@ export function extractSlots(message: string): ExtractedSlots {
     if (pattern.test(message)) {
       result.treatmentArea = area;
       break;
+    }
+  }
+
+  // Detect service category from whatever service/area was extracted in this message.
+  if (result.service) {
+    result.serviceCategory = detectServiceCategory(result.service, result.treatmentArea);
+  }
+
+  // Detect dental treatment type when service is dental-family
+  if (result.serviceCategory === "dental" || /implant|veneer|whitening|smile\s*design|beyazlatma|porselen|gülüş|\bdiş\b|\bdental\b/i.test(message)) {
+    for (const [pattern, type] of DENTAL_TYPE_PATTERNS) {
+      if (pattern.test(message)) {
+        result.dentalTreatmentType = type;
+        break;
+      }
+    }
+  }
+
+  // Detect teeth count / scope for dental flow
+  for (const [pattern, resolver] of TEETH_SCOPE_PATTERNS) {
+    const m = message.match(pattern as RegExp);
+    if (m) {
+      result.teethCountOrScope = typeof resolver === "function" ? resolver(m) : resolver;
+      break;
+    }
+  }
+
+  // Detect graft count for hair transplant
+  const graftMatch = message.match(GRAFT_COUNT_RE);
+  if (graftMatch) {
+    const raw = graftMatch[1].replace(/[.,]/g, "");
+    const num = parseInt(raw, 10);
+    if (!isNaN(num) && num > 0) result.estimatedGrafts = num;
+  }
+
+  // Detect travelling from abroad vs already local
+  if (ALREADY_LOCAL_PATTERNS.some((p) => p.test(message))) {
+    result.travellingFromAbroad = false;
+  } else if (TRAVELLING_ABROAD_PATTERNS.some((p) => p.test(message))) {
+    result.travellingFromAbroad = true;
+  }
+
+  // Detect treatment timeline (month/season range, not a specific appointment day)
+  if (TIMELINE_PATTERNS.some((p) => p.test(message))) {
+    const tlMatch = TIMELINE_PATTERNS.find((p) => p.test(message));
+    if (tlMatch) {
+      const m = message.match(tlMatch);
+      if (m) result.treatmentTimeline = m[0].trim();
     }
   }
 
@@ -339,6 +512,24 @@ export function extractSlots(message: string): ExtractedSlots {
     }
   }
 
+  // Detect availability inquiry (patient asking about open slots)
+  if (AVAILABILITY_INQUIRY_PATTERNS.some((p) => p.test(message))) {
+    result.availabilityInquiry = true;
+  }
+
+  // Detect device/technology inquiry
+  if (DEVICE_INQUIRY_PATTERNS.some((p) => p.test(message))) {
+    result.deviceInquiry = true;
+  }
+
+  // Detect pre-treatment preparation inquiry
+  if (PRE_TREATMENT_INQUIRY_PATTERNS.some((p) => p.test(message))) {
+    result.preTreatmentInquiry = true;
+  }
+
+  // Record detected language for prompt context
+  result.detectedLanguage = detectMessageLanguage(message);
+
   result.leadScore = calculateLeadScore(result);
 
   return result;
@@ -346,21 +537,45 @@ export function extractSlots(message: string): ExtractedSlots {
 
 /**
  * Returns the likely language of a message.
- * Turkish-specific characters (ğ, ı, İ, Ğ) are the strongest signal.
- * Falls back to common Turkish keyword matching for ASCII-only messages.
+ * Covers 7 languages common in premium international clinic markets.
+ * Turkish-specific chars (ğ, ı, İ, Ğ) are the strongest Turkish signal.
+ * For other languages, Unicode ranges and keyword heuristics are used.
  */
-function detectMessageLanguage(message: string): "turkish" | "english" {
+export function detectMessageLanguage(message: string): MessageLanguage {
+  // Turkish: dotted-I chars are unambiguous; fall back to Turkish keywords
   if (/[ğıİĞ]/.test(message)) return "turkish";
   if (/\b(merhaba|lazer|epilasyon|fiyat|randevu|için|istiyorum|uygun|tamam|evet|teşekkür)\b/i.test(message)) return "turkish";
+  // Arabic script
+  if (/[؀-ۿ]/.test(message)) return "arabic";
+  // Cyrillic (Russian and related)
+  if (/[а-яёА-ЯЁ]/.test(message)) return "russian";
+  // German: ä/Ä are low-overlap; ö/ü shared with Turkish (already checked) and French
+  if (/[äÄ]/.test(message) || /\b(wie|viel|kostet|termin|behandlung|preis|haar(?:entfernung|transplantation))\b/i.test(message)) return "german";
+  // French: distinctly French chars (à, â, ê, î, ô, œ, etc.) or keywords
+  if (/[àâæêîïôœùûÿÀÂÆÊÎÏÔŒÙÛŸ]/.test(message) || /\b(bonjour|bonsoir|combien|traitement|rendez-vous|épilation)\b/i.test(message)) return "french";
+  // Spanish: inverted punctuation, ñ, or common clinic keywords
+  if (/[¿¡ñÑ]/.test(message) || /\b(hola|precio|cu[aá]nto|tratamiento|depilaci[oó]n)\b/i.test(message)) return "spanish";
   return "english";
 }
 
-// Canonical key shared by all cross-language laser service equivalents.
+// Canonical keys — cross-language equivalents within a service family share one key.
 const LASER_CANONICAL = "__laser__";
 const LASER_SERVICE_RE = /^(?:laser\s+hair\s+removal|lazer\s+epilasyon|epilasyon)$/i;
 
+// All hair-transplant service names collapse to one canonical so Turkish/English
+// variants (saç ekimi ↔ hair transplant) and graft-count-derived names don't conflict.
+const HAIR_CANONICAL = "__hair__";
+const HAIR_SERVICE_RE = /^(?:hair\s*transplant|saç\s*ekimi|sac\s*ekimi)$/i;
+
+// All dental service sub-types (veneer ↔ smile design ↔ implant ↔ whitening) map to
+// one canonical to avoid false conflicts when a patient refines their dental interest.
+const DENTAL_CANONICAL = "__dental__";
+const DENTAL_SERVICE_RE = /^(?:dental|smile\s*design|veneer|implant|whitening|orthodontics|filling|extraction)$/i;
+
 function normalizeServiceCrossLang(service: string): string {
   if (LASER_SERVICE_RE.test(service.trim())) return LASER_CANONICAL;
+  if (HAIR_SERVICE_RE.test(service.trim())) return HAIR_CANONICAL;
+  if (DENTAL_SERVICE_RE.test(service.trim())) return DENTAL_CANONICAL;
   return service.toLowerCase();
 }
 
@@ -404,6 +619,8 @@ export function calculateLeadScoreFromState(state: {
   urgency?: UrgencyLevel;
   priceInquired?: boolean;
   firstTimeLaser?: boolean;
+  travellingFromAbroad?: boolean;
+  estimatedGrafts?: number;
 }): LeadScore {
   const hasService = !!(state.service || state.treatmentArea);
   const hasDateTime = !!(state.preferredDate || state.preferredTime);
@@ -413,6 +630,7 @@ export function calculateLeadScoreFromState(state: {
   if (isUrgent) return "hot";
   if (hasService && hasDateTime && hasContact) return "hot";
   if (hasService && hasDateTime) return "hot";
+  if (state.travellingFromAbroad && hasService) return "hot";
   if (state.priceInquired && hasService && hasDateTime) return "hot";
   if (state.priceInquired && hasService) return "warm";
   if (hasService) return "warm";

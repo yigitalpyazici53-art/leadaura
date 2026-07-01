@@ -277,3 +277,118 @@ At the end of the task, report:
 6. commands run
 7. test/build results
 8. remaining risks
+
+## Premium Clinic Feature Requirements
+
+LeadAura should support these seven premium clinic capabilities in a professional, structured way.
+
+### 1. Appointment Availability / Slot Request Handling
+
+LeadAura should understand appointment availability requests such as:
+- “Is Saturday afternoon available?”
+- “Do you have any slots tomorrow?”
+- “Şu gün boş musunuz?”
+- “Cumartesi öğleden sonra randevu var mı?”
+
+Important:
+- Do not confirm a real appointment unless live calendar availability is explicitly integrated.
+- Use “appointment request” language.
+- If calendar integration is not available, collect the preferred day/time and tell the patient the clinic team will confirm availability.
+
+### 2. Multi-Language Support
+
+LeadAura should reply in the same language as the latest customer message.
+
+Priority languages for premium international clinics:
+- English
+- Turkish
+- Arabic
+- German
+- Russian
+- French
+- Spanish
+
+Do not force English if the latest customer message is clearly another language.
+
+### 3. Instagram DM Readiness
+
+LeadAura’s primary live channel is currently WhatsApp.
+
+Instagram DM automation should be treated as a future channel unless the codebase already has a working Instagram webhook.
+
+Do not claim Instagram DM automation is live unless implemented.
+
+The qualification flow should be reusable across channels.
+
+### 4. Business-Specific Minimum Price / Starting Price
+
+LeadAura should support clinic-approved starting-price guidance.
+
+Important:
+- Never invent prices.
+- Only mention minimum/starting price if explicitly configured by the clinic.
+- If not configured, use safe pricing fallback.
+
+### 5. Clinic Device / Technology Brands
+
+LeadAura should answer questions about approved clinic devices, technologies, or brands only if configured.
+
+Important:
+- Do not invent device brands.
+- Do not make clinical superiority claims.
+- Do not say “best” or “guaranteed result.”
+- Keep the answer factual and continue qualification.
+
+### 6. Location and Transportation Information
+
+LeadAura should support configured clinic location and transportation guidance.
+
+Useful fields:
+- clinic address
+- Google Maps link
+- district/neighborhood
+- nearest metro/transport point
+- parking availability
+- airport transfer note if relevant
+
+Important:
+- Do not invent location details.
+- Only use configured clinic information.
+- If unavailable, say the team will share location details.
+
+### 7. Pre-Treatment Preparation Instructions
+
+LeadAura should support clinic-approved pre-treatment preparation notes.
+
+Important:
+- Only provide generic clinic-approved preparation notes.
+- Avoid medical advice.
+- Avoid diagnosis.
+- Avoid medication instructions unless explicitly approved by the clinic.
+- If the question is clinical, direct the patient to the clinic team.
+
+## Configuration Guidance
+
+Possible clinic config fields:
+- supportedLanguages
+- startingPrices
+- deviceBrands
+- locationInfo
+- transportationInfo
+- preTreatmentInstructions
+- channelCapabilities
+
+Do not hardcode fake clinic prices, fake devices, or fake addresses.
+
+## Feature Priority
+
+Implementation priority:
+1. Appointment availability request handling
+2. Business-specific pricing config / safe fallback
+3. Location and transportation info
+4. Device/technology brand config
+5. Pre-treatment preparation notes
+6. Expanded multilingual readiness
+7. Instagram DM future-readiness
+
+Instagram DM should not be implemented as a live claim until webhook/auth/channel integration exists.
