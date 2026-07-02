@@ -1192,7 +1192,9 @@ async function testQualificationFlows(): Promise<void> {
   dState = await updateState(phoneQ5, { teethCountOrScope: "8 teeth" });
   assertEqual("Q6: dental teethCountOrScope set → collect_datetime", getNextStage(dState), "collect_datetime");
 
-  // Q7: Date/time provided before qualification → skip collect_qualification (backward compat)
+  // Q7: Date/time provided before qualification must NOT skip the vertical gate.
+  // The required field (firstTimeLaser) is still missing, so we stay in collect_qualification —
+  // never jump to name/phone. (Removing this early-datetime bypass was the core bug fix.)
   const phoneQ7 = "+905000000203";
   await resetState(phoneQ7);
   let skipState = await updateState(phoneQ7, {
@@ -1200,7 +1202,18 @@ async function testQualificationFlows(): Promise<void> {
     serviceCategory: "laser",
     preferredDate: "cumartesi",
   });
-  assertEqual("Q7: date provided early → qualification skipped", getNextStage(skipState), "collect_name");
+  assertEqual(
+    "Q7: date early but firstTimeLaser missing → still collect_qualification",
+    getNextStage(skipState),
+    "collect_qualification"
+  );
+  // Once the vertical field is answered, the already-known date lets it skip straight to name.
+  skipState = await updateState(phoneQ7, { firstTimeLaser: true });
+  assertEqual(
+    "Q7b: firstTimeLaser answered + date already given → collect_name",
+    getNextStage(skipState),
+    "collect_name"
+  );
 
   // Q8: No serviceCategory → qualification skipped (backward compat with old sessions)
   const phoneQ8 = "+905000000204";

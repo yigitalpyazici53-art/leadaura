@@ -113,7 +113,13 @@ const NEXT_FIELD_PROMPT: Record<Stage, string> = {
 function buildQualificationTask(state: ConversationState): string {
   const cat = state.serviceCategory;
   if (cat === "laser") {
-    return "Ask whether this is the patient's first time having this treatment. Ask nothing else. Example (TR): 'Bu işlemi ilk kez mi yaptıracaksınız?' Example (EN): 'Would this be your first time having this treatment?'";
+    // If the patient asked about availability or already gave a day/time, acknowledge that the
+    // clinic team will confirm availability first (never confirm the slot yourself), then ask.
+    const ackAvailability =
+      state.availabilityInquiry || state.preferredDate || state.preferredTime
+        ? "First, briefly acknowledge that you have noted their preferred day/time and the clinic team will confirm availability and follow up — do NOT confirm or guarantee the appointment yourself. Then, in the same message, "
+        : "";
+    return `${ackAvailability}Ask whether this is the patient's first time having this treatment. Ask nothing else. Reference the patient's OWN stated day/time — never substitute a different day. Example (TR): 'Talebinizi not aldım. Ekibimiz uygunluğu kontrol edip size dönüş yapacaktır. Bu işlemi ilk kez mi yaptıracaksınız?' Example (EN): 'Would this be your first time having this treatment?'`;
   }
   if (cat === "hair_transplant") {
     if (state.estimatedGrafts !== undefined) {

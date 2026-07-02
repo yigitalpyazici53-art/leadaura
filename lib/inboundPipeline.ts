@@ -6,7 +6,7 @@ import {
   getNextStage,
 } from "./conversationState";
 import type { ConversationState } from "./conversationState";
-import { extractSlots, detectConflict, calculateLeadScoreFromState, extractNameFallback } from "./slotExtractor";
+import { extractSlots, detectConflict, calculateLeadScoreFromState, extractNameFallback, detectServiceCategory } from "./slotExtractor";
 import type { ExtractedSlots } from "./slotExtractor";
 import { classifyIntent } from "./classifyIntent";
 import { generateSmsReply } from "./anthropic";
@@ -20,6 +20,46 @@ const STAGE_FALLBACK: Record<string, string> = {
   collect_name:           "Could I please take your name and phone number?",
   complete:               "Thank you. We received your appointment request. Our team will follow up shortly.",
 };
+
+// Deterministic, vertical-aware qualification reply used on the static fallback path
+// (no Anthropic key, or the API failed). It mirrors the qualification question the
+// system prompt would ask, and critically NEVER requests name/phone or confirms an
+// appointment while the vertical field is still missing. Wording is kept short so the
+// question survives the SMS-length truncation applied by sanitizeSmsText().
+function buildQualificationFallbackReply(state: ConversationState): string {
+  const cat = state.serviceCategory;
+
+  if (cat === "laser") {
+    const question = "Is this your first time having this treatment?";
+    // A volunteered/requested slot is acknowledged as "we'll check availability" — never confirmed.
+    if (state.availabilityInquiry || state.preferredDate || state.preferredTime) {
+      return `Noted your preferred time; our team will check availability. ${question}`;
+    }
+    if (state.priceInquired) {
+      return `Pricing depends on a quick assessment. ${question}`;
+    }
+    return question;
+  }
+  if (cat === "hair_transplant") {
+    const pricing = state.priceInquired ? "Pricing depends on a graft assessment. " : "";
+    if (state.estimatedGrafts !== undefined) {
+      return `${pricing}Will you be travelling to Istanbul, or already based here?`;
+    }
+    return `${pricing}Do you know roughly how many grafts you're considering?`;
+  }
+  if (cat === "dental") {
+    const pricing = state.priceInquired ? "Pricing depends on a quick assessment. " : "";
+    return `${pricing}Are you considering a full smile design or a few teeth?`;
+  }
+  return STAGE_FALLBACK.collect_qualification;
+}
+
+// Chooses the static reply for a stage. The qualification stage is vertical-aware so the
+// fallback never regresses to a generic prompt (or worse, a name/phone request).
+function staticReplyFor(state: ConversationState): string {
+  if (state.stage === "collect_qualification") return buildQualificationFallbackReply(state);
+  return STAGE_FALLBACK[state.stage] ?? STAGE_FALLBACK.collect_treatment_area;
+}
 
 export interface InboundPipelineResult {
   from: string;
@@ -100,8 +140,12 @@ export async function processInboundMessage(
   }
 
   // When a treatment area is detected without an explicit service, normalize to the configured primary service.
+  // Also derive the service category so the vertical qualification gate engages for area-only openers.
   if (extractedSlots.treatmentArea && !extractedSlots.service && !stateBefore.service) {
     extractedSlots.service = clinicConfig.primaryService;
+    if (!extractedSlots.serviceCategory && !stateBefore.serviceCategory) {
+      extractedSlots.serviceCategory = detectServiceCategory(clinicConfig.primaryService, extractedSlots.treatmentArea);
+    }
   }
 
   const conflictQuestion = detectConflict(stateBefore, extractedSlots, input);
@@ -133,15 +177,11 @@ export async function processInboundMessage(
       } catch (err) {
         console.error("[Pipeline] Anthropic failed:", err instanceof Error ? err.message : err);
         console.log(`[Pipeline] using static fallback reply (stage: ${stateUpdated.stage})`);
-        assistantReply = sanitizeSmsText(
-          STAGE_FALLBACK[stateUpdated.stage] ?? STAGE_FALLBACK.collect_treatment_area
-        );
+        assistantReply = sanitizeSmsText(staticReplyFor(stateUpdated));
       }
     } else {
       console.warn("[Pipeline] ANTHROPIC_API_KEY not set — using static fallback reply");
-      assistantReply = sanitizeSmsText(
-        STAGE_FALLBACK[stateUpdated.stage] ?? STAGE_FALLBACK.collect_treatment_area
-      );
+      assistantReply = sanitizeSmsText(staticReplyFor(stateUpdated));
     }
   }
 

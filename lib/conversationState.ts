@@ -193,12 +193,19 @@ export async function addToHistory(
   }
 }
 
-// Returns true when the qualification question for this service category has been answered.
-// Skips the gate if date/time is already known (patient volunteered it early).
+// Returns true only when the vertical qualification field for this category has an
+// ACTUAL value. Completion depends on real answers, never on whether the question was
+// asked — asking-then-ignoring must NOT advance the flow. This is a HARD gate before
+// name/phone even when the patient volunteered date/time early: that early-datetime
+// bypass was the bug that made LeadAura ask for contact details before qualifying.
+//
+//   - No/"other" category → nothing vertical to qualify.
+//   - laser           → first-time status answered.
+//   - hair_transplant → travel origin (abroad vs local) answered.
+//   - dental          → treatment scope (full smile vs tooth count) answered.
 function qualificationComplete(state: ConversationState): boolean {
   const cat = state.serviceCategory;
-  if (!cat) return true;
-  if (state.preferredDate || state.preferredTime) return true;
+  if (!cat || cat === "other") return true;
   if (cat === "laser") return state.firstTimeLaser !== undefined;
   if (cat === "hair_transplant") return state.travellingFromAbroad !== undefined;
   if (cat === "dental") return !!state.teethCountOrScope;

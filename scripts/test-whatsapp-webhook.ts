@@ -75,6 +75,28 @@ function assertNotContains(label: string, haystack: string, needle: string) {
   else fail(label, `"${needle}" unexpectedly found in "${haystack}"`);
 }
 
+// Fails if the reply states a concrete monetary figure (e.g. "5000 TL", "$1,200", "1500 lira").
+// Graft counts like "3000 grafts" are NOT prices and must not trip this.
+function assertNoInventedPrice(label: string, reply: string) {
+  const priceRe = /[$₺€£]\s?\d|\d[\d.,]*\s?(?:tl|₺|€|£|\$|lira|usd|eur|gbp|dollars?|euros?)\b/i;
+  if (priceRe.test(reply)) fail(label, `invented price detected in "${reply}"`);
+  else pass(label, "no concrete price figure");
+}
+
+// Asserts the reply does not ask for the patient's name or phone number.
+function assertNoContactRequest(label: string, reply: string) {
+  const lower = reply.toLowerCase();
+  const asksContact =
+    lower.includes("name") ||
+    lower.includes("phone") ||
+    lower.includes("isim") ||
+    lower.includes("isminiz") ||
+    lower.includes("adınız") ||
+    lower.includes("telefon");
+  if (asksContact) fail(label, `reply asks for name/phone: "${reply}"`);
+  else pass(label, "no name/phone request");
+}
+
 // ── WhatsApp send (real or mocked) ────────────────────────────────────────────
 
 const hasWhatsAppConfig = !!(
@@ -148,7 +170,18 @@ async function main() {
   );
   assertDefined("T1: stateAfter.service set", t1.stateAfter.service);
   assertContains("T1: service = lazer epilasyon", t1.stateAfter.service ?? "", "lazer epilasyon");
+  assertEqual("T1: laser → gated at collect_qualification", t1.nextStage, "collect_qualification");
   await trySendWhatsApp(PHONE_MT, t1.assistantReply);
+
+  // Turn 1b: answer the first-time qualification question (required before date/name).
+  const t1b = await processInboundMessage({
+    from: PHONE_MT,
+    body: "Evet, ilk kez yaptıracağım.",
+    source: "whatsapp",
+  });
+  assertEqual("T1b: firstTimeLaser captured", t1b.stateAfter.firstTimeLaser, true);
+  assertEqual("T1b: qualification answered → collect_datetime", t1b.nextStage, "collect_datetime");
+  await trySendWhatsApp(PHONE_MT, t1b.assistantReply);
 
   // Turn 2: date and time
   const t2 = await processInboundMessage({
@@ -221,6 +254,15 @@ async function main() {
   console.log(`  W1 service=${w1.stateAfter.service ?? "(none)"} stage=${w1.nextStage}`);
   assertDefined("W1: service extracted", w1.stateAfter.service);
   assertContains("W1: service = lazer epilasyon", w1.stateAfter.service ?? "", "lazer epilasyon");
+  assertEqual("W1: laser → gated at collect_qualification", w1.nextStage, "collect_qualification");
+
+  // Turn 1b: answer the first-time qualification question so the flow can later complete.
+  const w1b = await processInboundMessage({
+    from: PHONE_6T,
+    body: "İlk kez olacak.",
+    source: "whatsapp",
+  });
+  assertEqual("W1b: firstTimeLaser captured", w1b.stateAfter.firstTimeLaser, true);
 
   // Turn 2: single-word name (regression — was not extracted before this fix)
   const w2 = await processInboundMessage({
@@ -570,6 +612,124 @@ async function main() {
   } else {
     fail("R3: name cleared after reset", `expected undefined, got "${waStateAfter.name}"`);
   }
+
+  // ── Section 10: Qualification flow — laser, hair transplant, dental ─────────
+  // Strict gate tests: the vertical qualification field is a HARD prerequisite before
+  // name/phone. Each test asserts an EXACT expected stage and the EXACT required field.
+  console.log("\n── 10. Qualification flows ──");
+
+  // 10a. Laser PRICE inquiry — no firstTimeLaser yet → must stay in collect_qualification,
+  // ask the first-time question with safe pricing, and NOT request name/phone.
+  const PHONE_LQ = "905551112430";
+  await resetStateForTest(PHONE_LQ);
+  const lq1 = await processInboundMessage({
+    from: PHONE_LQ,
+    body: "Merhaba, full body lazer fiyatı ne kadar?",
+    source: "whatsapp",
+  });
+  assertEqual("LQ1: serviceCategory = laser", lq1.stateAfter.serviceCategory, "laser");
+  assertEqual("LQ1: firstTimeLaser missing (required field)", lq1.stateAfter.firstTimeLaser, undefined);
+  assertEqual("LQ1: stage = collect_qualification (exact)", lq1.stateAfter.stage, "collect_qualification");
+  assertContains("LQ1: reply asks first-time status", lq1.assistantReply, "first time");
+  assertContains("LQ1: reply uses safe pricing language", lq1.assistantReply, "pricing");
+  assertNoContactRequest("LQ1: reply does not request name/phone", lq1.assistantReply);
+  assertNoInventedPrice("LQ1: reply invents no exact price", lq1.assistantReply);
+  console.log(`  LQ1 stage=${lq1.stateAfter.stage} reply="${lq1.assistantReply.slice(0, 90)}"`);
+
+  // 10b. Laser AVAILABILITY inquiry with a volunteered day/time — capture date/time and
+  // availabilityInquiry, acknowledge the team will check availability (never confirm the
+  // slot), still ask first-time, and NOT request name/phone. Stage stays collect_qualification.
+  const PHONE_AV = "905551112433";
+  await resetStateForTest(PHONE_AV);
+  const av1 = await processInboundMessage({
+    from: PHONE_AV,
+    body: "Bu cumartesi öğleden sonra müsait misiniz? Full body lazer.",
+    source: "whatsapp",
+  });
+  assertEqual("AV1: serviceCategory = laser", av1.stateAfter.serviceCategory, "laser");
+  assertEqual("AV1: stage = collect_qualification (exact)", av1.stateAfter.stage, "collect_qualification");
+  assertContains("AV1: preferredDate captured", av1.stateAfter.preferredDate ?? "", "cumartesi");
+  assertContains("AV1: preferredTime captured", av1.stateAfter.preferredTime ?? "", "öğleden sonra");
+  assertEqual("AV1: availabilityInquiry = true", av1.stateAfter.availabilityInquiry, true);
+  assertEqual("AV1: firstTimeLaser still missing", av1.stateAfter.firstTimeLaser, undefined);
+  assertContains("AV1: reply says team will check availability", av1.assistantReply, "availability");
+  assertNotContains("AV1: reply does not confirm the appointment", av1.assistantReply, "confirmed");
+  assertNotContains("AV1: reply does not say booked", av1.assistantReply, "booked");
+  assertContains("AV1: reply still asks first-time status", av1.assistantReply, "first time");
+  assertNoContactRequest("AV1: reply does not request name/phone", av1.assistantReply);
+  console.log(`  AV1 stage=${av1.stateAfter.stage} date=${av1.stateAfter.preferredDate} time=${av1.stateAfter.preferredTime} avail=${av1.stateAfter.availabilityInquiry}`);
+  console.log(`       reply="${av1.assistantReply.slice(0, 90)}"`);
+
+  // 10c. Hair transplant — graft count known but travel origin missing → collect_qualification.
+  // The EXACT required missing field is travellingFromAbroad.
+  const PHONE_HQ = "905551112431";
+  await resetStateForTest(PHONE_HQ);
+  const hq1 = await processInboundMessage({
+    from: PHONE_HQ,
+    body: "Hi, how much for around 3000 grafts?",
+    source: "whatsapp",
+  });
+  assertEqual("HQ1: serviceCategory = hair_transplant", hq1.stateAfter.serviceCategory, "hair_transplant");
+  assertEqual("HQ1: estimatedGrafts = 3000", hq1.stateAfter.estimatedGrafts, 3000);
+  assertEqual("HQ1: travellingFromAbroad missing (required field)", hq1.stateAfter.travellingFromAbroad, undefined);
+  assertEqual("HQ1: stage = collect_qualification (exact)", hq1.stateAfter.stage, "collect_qualification");
+  assertContains("HQ1: reply asks travel origin", hq1.assistantReply, "travelling");
+  assertNoContactRequest("HQ1: reply does not request name/phone", hq1.assistantReply);
+  assertNoInventedPrice("HQ1: reply invents no graft price", hq1.assistantReply);
+  console.log(`  HQ1 stage=${hq1.stateAfter.stage} grafts=${hq1.stateAfter.estimatedGrafts} abroad=${hq1.stateAfter.travellingFromAbroad}`);
+
+  // 10d. Hair transplant — travel origin answered → stage advances to collect_datetime (exact).
+  const hq2 = await processInboundMessage({
+    from: PHONE_HQ,
+    body: "Yes, I'm coming from abroad.",
+    source: "whatsapp",
+  });
+  assertEqual("HQ2: travellingFromAbroad = true", hq2.stateAfter.travellingFromAbroad, true);
+  assertEqual("HQ2: stage = collect_datetime (exact)", hq2.stateAfter.stage, "collect_datetime");
+
+  // 10e. Dental veneers inquiry — treatment scope missing → collect_qualification.
+  // The EXACT required missing field is teethCountOrScope.
+  const PHONE_DQ = "905551112432";
+  await resetStateForTest(PHONE_DQ);
+  const dq1 = await processInboundMessage({
+    from: PHONE_DQ,
+    body: "Hi, how much are veneers in Istanbul?",
+    source: "whatsapp",
+  });
+  assertEqual("DQ1: serviceCategory = dental", dq1.stateAfter.serviceCategory, "dental");
+  assertEqual("DQ1: dentalTreatmentType = veneer", dq1.stateAfter.dentalTreatmentType, "veneer");
+  assertEqual("DQ1: teethCountOrScope missing (required field)", dq1.stateAfter.teethCountOrScope, undefined);
+  assertEqual("DQ1: stage = collect_qualification (exact)", dq1.stateAfter.stage, "collect_qualification");
+  assertContains("DQ1: reply asks full smile vs teeth", dq1.assistantReply, "full smile");
+  assertNoContactRequest("DQ1: reply does not request name/phone", dq1.assistantReply);
+  assertNoInventedPrice("DQ1: reply invents no veneer price", dq1.assistantReply);
+  console.log(`  DQ1 stage=${dq1.stateAfter.stage} dental=${dq1.stateAfter.dentalTreatmentType} reply="${dq1.assistantReply.slice(0, 90)}"`);
+
+  // 10f. Dental scope answered → stage advances to collect_datetime (exact).
+  const dq2 = await processInboundMessage({
+    from: PHONE_DQ,
+    body: "I'm considering a full smile design.",
+    source: "whatsapp",
+  });
+  assertEqual("DQ2: teethCountOrScope = full smile", dq2.stateAfter.teethCountOrScope, "full smile");
+  assertEqual("DQ2: stage = collect_datetime (exact)", dq2.stateAfter.stage, "collect_datetime");
+
+  // 10g. Dental flow completes with date then name+phone.
+  await processInboundMessage({
+    from: PHONE_DQ,
+    body: "Saturday morning works for me.",
+    source: "whatsapp",
+  });
+  const dq4 = await processInboundMessage({
+    from: PHONE_DQ,
+    body: "Sarah, +44 7700 900456",
+    source: "whatsapp",
+  });
+  assertContains("DQ4: name captured", dq4.stateAfter.name ?? "", "Sarah");
+  assertDefined("DQ4: phone captured", dq4.stateAfter.phone);
+  assertEqual("DQ4: stage = complete (exact)", dq4.stateAfter.stage, "complete");
+  assertContains("DQ4: reply mentions appointment request", dq4.assistantReply, "appointment request");
+  console.log(`  DQ4 stage=${dq4.stateAfter.stage} name=${dq4.stateAfter.name}`);
 
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");
