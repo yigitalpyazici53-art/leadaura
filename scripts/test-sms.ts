@@ -52,7 +52,8 @@ import { extractSlots, detectConflict, calculateLeadScoreFromState, normalizeTre
 import { processInboundMessage } from "../lib/inboundPipeline";
 import { classifyIntent } from "../lib/classifyIntent";
 import { buildSystemPrompt } from "../lib/prompt";
-import { clinicConfig, formatBookingLinkMessage } from "../lib/clinicConfig";
+import { clinicConfig, formatBookingLinkMessage, getBookingUrl } from "../lib/clinicConfig";
+import { handleBookingHandoff } from "../lib/bookingHandoff";
 import {
   SUPPORTED_LANGUAGES,
   fallbackText,
@@ -2787,6 +2788,99 @@ function testFirstTimeQuestionWording(): void {
   }
 }
 
+// ── Booking-link handoff: Twilio (SMS + Twilio-WhatsApp) route decision ─────
+// Exercises the SAME production decision the Twilio incoming-sms route uses
+// (handleBookingHandoff with sendSms mocked). Proves the SMS channel keeps working
+// (bare recipient, no whatsapp: prefix), the two-message ordering, the runtime env
+// read, and that a not-yet-complete conversation is skipped safely.
+
+async function testBookingHandoffTwilio(): Promise<void> {
+  header("Booking-link handoff: Twilio route decision + outbound (SMS channel)");
+
+  const savedBookingUrl = process.env.CLINIC_BOOKING_URL;
+  const savedKey = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY; // force deterministic static replies
+  const BOOKING_URL = "https://clinic.example/book/sms";
+
+  try {
+    process.env.CLINIC_BOOKING_URL = BOOKING_URL;
+
+    // Runtime accessor reads process.env at call time (module was imported earlier).
+    assertEqual("BH-SMS 0: getBookingUrl reads runtime env at call time", getBookingUrl(), BOOKING_URL);
+
+    // Drive a Turkish conversation to completion on the SMS path (source defaults to sms).
+    const phone = "+905551110700"; // bare E.164 — an SMS recipient, no whatsapp: prefix
+    await resetState(phone);
+    await _setStateForTest(phone, {
+      stage: "collect_name",
+      service: "lazer epilasyon",
+      treatmentArea: "full body",
+      serviceCategory: "laser",
+      firstTimeLaser: true,
+      preferredDate: "cumartesi",
+      preferredTime: "öğleden sonra",
+      detectedLanguage: "turkish",
+      history: [
+        { role: "user", content: "Merhaba, full body lazer için cumartesi uygun musunuz?" },
+        { role: "assistant", content: "İsminizi ve telefon numaranızı alabilir miyim?" },
+      ],
+      lastUpdated: Date.now(),
+    });
+    const complete = await processInboundMessage({ from: phone, body: "Zeynep, +44 7700 900123", source: "sms" });
+    assertEqual("BH-SMS 1: reached complete", complete.stateAfter.stage, "complete");
+    assertEqual("BH-SMS 1: bookingLinkSent false before handoff", Boolean(complete.stateAfter.bookingLinkSent), false);
+
+    // Replay the Twilio route order through one recorder: reply, then booking handoff.
+    const sent: Array<{ to: string; body: string }> = [];
+    const recorder = async (to: string, body: string) => { sent.push({ to, body }); };
+    await recorder(phone, complete.assistantReply);
+    const outcome = await handleBookingHandoff({
+      from: phone,
+      stateAfter: complete.stateAfter,
+      channel: "twilio",
+      send: recorder,
+    });
+
+    assertEqual("BH-SMS 1: exactly two outbound messages", sent.length, 2);
+    assertEqual("BH-SMS 1: message 1 is the completion reply", sent[0].body, complete.assistantReply);
+    assertContains("BH-SMS 1: message 2 is the Turkish booking link", sent[1].body, "Randevu talebinizi buradan tamamlayabilirsiniz");
+    assertContains("BH-SMS 1: message 2 contains the booking URL", sent[1].body, BOOKING_URL);
+    assertEqual("BH-SMS 1: booking recipient is the bare SMS number (no whatsapp: prefix)", sent[1].to, phone);
+    assertEqual("BH-SMS 1: handoff sent=true", outcome.sent, true);
+
+    // Flag written only after the successful send.
+    assertEqual("BH-SMS 2: bookingLinkSent true after successful send", (await getState(phone)).bookingLinkSent, true);
+
+    // not_complete: a mid-flow state must never trigger the booking link.
+    const midPhone = "+905551110701";
+    await resetState(midPhone);
+    await _setStateForTest(midPhone, {
+      stage: "collect_datetime",
+      service: "lazer epilasyon",
+      treatmentArea: "full body",
+      serviceCategory: "laser",
+      firstTimeLaser: true,
+      detectedLanguage: "turkish",
+      history: [],
+      lastUpdated: Date.now(),
+    });
+    const midState = await getState(midPhone);
+    const sentMid: Array<{ to: string; body: string }> = [];
+    const midOutcome = await handleBookingHandoff({
+      from: midPhone,
+      stateAfter: midState,
+      channel: "twilio",
+      send: async (to, body) => { sentMid.push({ to, body }); },
+    });
+    assertEqual("BH-SMS 3: no outbound before complete", sentMid.length, 0);
+    assertEqual("BH-SMS 3: skippedReason=not_complete", midOutcome.skippedReason, "not_complete");
+  } finally {
+    if (savedBookingUrl !== undefined) process.env.CLINIC_BOOKING_URL = savedBookingUrl;
+    else delete process.env.CLINIC_BOOKING_URL;
+    if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -2831,6 +2925,7 @@ async function main() {
   await testFullBodyMultilingualExtraction();
   await testExactPricePreservation();
   testFirstTimeQuestionWording();
+  await testBookingHandoffTwilio();
 
   // End-to-end Claude API tests (require ANTHROPIC_API_KEY)
   const hasApiKey = !!process.env.ANTHROPIC_API_KEY;

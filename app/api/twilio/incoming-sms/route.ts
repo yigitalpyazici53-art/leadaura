@@ -5,7 +5,7 @@ import { logToSheet } from "@/lib/googleSheets";
 import { updateState } from "@/lib/conversationState";
 import { getRedis } from "@/lib/redis";
 import { processInboundMessage } from "@/lib/inboundPipeline";
-import { clinicConfig, formatBookingLinkMessage } from "@/lib/clinicConfig";
+import { handleBookingHandoff } from "@/lib/bookingHandoff";
 
 const EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 
@@ -159,15 +159,15 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   // ── 6. Booking link handoff ──────────────────────────────────────────────
-  if (clinicConfig.bookingUrl && result.stateAfter.stage === "complete" && !result.stateAfter.bookingLinkSent) {
-    try {
-      await sendSms(from, formatBookingLinkMessage(clinicConfig.bookingUrl, result.stateAfter.detectedLanguage));
-      await updateState(from, { bookingLinkSent: true });
-      console.log("[SMS] booking link sent");
-    } catch (err) {
-      console.error("[SMS] Booking link send failed:", err instanceof Error ? err.message : err);
-    }
-  }
+  // Runtime booking-URL read + skip/attempt/sent decision live in the shared handler
+  // so this channel and the Meta webhook stay in lockstep. `from` retains any
+  // "whatsapp:" prefix so the follow-up reaches WhatsApp when Twilio delivered it there.
+  await handleBookingHandoff({
+    from,
+    stateAfter: result.stateAfter,
+    channel: "twilio",
+    send: sendSms,
+  });
 
   // ── 7. Owner notification ────────────────────────────────────────────────
   if (result.shouldNotifyOwner) {

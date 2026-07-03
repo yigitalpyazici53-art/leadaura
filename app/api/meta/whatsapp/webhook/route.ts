@@ -5,7 +5,7 @@ import { sendWhatsAppText } from "@/lib/metaWhatsApp";
 import { notifyOwner } from "@/lib/twilio";
 import { logToSheet } from "@/lib/googleSheets";
 import { updateState } from "@/lib/conversationState";
-import { clinicConfig, formatBookingLinkMessage } from "@/lib/clinicConfig";
+import { handleBookingHandoff } from "@/lib/bookingHandoff";
 
 // Types for the Meta WhatsApp Cloud API webhook payload
 interface MetaWebhookPayload {
@@ -168,15 +168,14 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           }
 
           // ── Booking link handoff ──────────────────────────────────────────
-          if (clinicConfig.bookingUrl && result.stateAfter.stage === "complete" && !result.stateAfter.bookingLinkSent) {
-            try {
-              await sendWhatsAppText(from, formatBookingLinkMessage(clinicConfig.bookingUrl, result.stateAfter.detectedLanguage));
-              await updateState(from, { bookingLinkSent: true });
-              console.log("[WhatsApp Webhook] booking link sent");
-            } catch (err) {
-              console.error("[WhatsApp Webhook] Booking link send failed:", err instanceof Error ? err.message : err);
-            }
-          }
+          // Shared decision: runtime booking-URL read, safe diagnostic log, and the
+          // flag-only-after-successful-send ordering — identical to the Twilio route.
+          await handleBookingHandoff({
+            from,
+            stateAfter: result.stateAfter,
+            channel: "meta",
+            send: sendWhatsAppText,
+          });
 
           // ── Owner notification ────────────────────────────────────────────
           if (result.shouldNotifyOwner) {

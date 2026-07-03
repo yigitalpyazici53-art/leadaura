@@ -309,6 +309,47 @@ async function main() {
   const waStateAfterReset2 = await getState(WA_PHONE_TWILIO2);
   assertEqual("WA4: state cleared when reset called with whatsapp:-prefixed number", waStateAfterReset2.stage, "collect_treatment_area");
 
+  // ── Section 7: Exact production WhatsApp key (the reported number) ──────────
+  // The physical Twilio WhatsApp route stores state under conv:whatsapp:+905419473049
+  // (From="whatsapp:+905419473049"). The reset endpoint receives the bare number and
+  // MUST clear that exact key — the same key the pipeline read/writes bookingLinkSent to.
+  console.log("\n── 7. Exact production WhatsApp key reset ──");
+
+  const PROD_TWILIO_WA = "whatsapp:+905419473049";
+  const PROD_BARE = "+905419473049";
+  const PROD_WA_KEY = "conv:whatsapp:+905419473049";
+
+  // Seed a completed lead with bookingLinkSent true under the exact Twilio WhatsApp key.
+  await _setStateForTest(PROD_TWILIO_WA, {
+    stage: "complete",
+    name: "Zeynep",
+    service: "laser hair removal",
+    treatmentArea: "full body",
+    bookingLinkSent: true,
+    history: [{ role: "user", content: "Zeynep, +44 7700 900123" }],
+    lastUpdated: Date.now(),
+  });
+
+  assertEqual("P1: production WhatsApp key = conv:whatsapp:+905419473049", getConversationKey(PROD_TWILIO_WA), PROD_WA_KEY);
+  const prodBefore = await getState(PROD_TWILIO_WA);
+  assertEqual("P1: seeded state present (bookingLinkSent true)", prodBefore.bookingLinkSent, true);
+
+  const prodDeleted = await deleteConversationState(PROD_BARE);
+  console.log(`  prodDeletedKeys: ${JSON.stringify(prodDeleted)}`);
+  if (prodDeleted.includes(PROD_WA_KEY)) {
+    pass("P2: exact production key conv:whatsapp:+905419473049 cleared by reset");
+  } else {
+    fail("P2: exact production key cleared by reset", `got ${JSON.stringify(prodDeleted)}`);
+  }
+
+  const prodAfter = await getState(PROD_TWILIO_WA);
+  assertEqual("P3: production state reset to fresh (stale bookingLinkSent gone)", prodAfter.stage, "collect_treatment_area");
+  if (prodAfter.bookingLinkSent === undefined) {
+    pass("P3: bookingLinkSent cleared after reset");
+  } else {
+    fail("P3: bookingLinkSent cleared after reset", `got ${String(prodAfter.bookingLinkSent)}`);
+  }
+
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");
   if (failures === 0) {

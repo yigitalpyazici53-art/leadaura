@@ -43,6 +43,16 @@ export const clinicConfig = {
   },
 };
 
+// Runtime accessor for the booking URL. Reads process.env at CALL time (inside the
+// request handler) instead of relying on the module-level clinicConfig.bookingUrl,
+// which is captured once when the module is first evaluated. In a deployed Next.js
+// route that captured value can be an empty string (env not present at module-init),
+// which silently disabled the booking-link handoff even though CLINIC_BOOKING_URL was
+// configured. Trimmed so stray whitespace never makes the guard truthy-but-broken.
+export function getBookingUrl(): string {
+  return process.env.CLINIC_BOOKING_URL?.trim() ?? "";
+}
+
 // Maps a conversation service category to that vertical's configured starting price.
 // Returns "" when the category is unknown or the price is not configured, so callers
 // fall back to the safe pricing response. Reads clinicConfig at call time — never

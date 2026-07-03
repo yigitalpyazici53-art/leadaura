@@ -39,7 +39,8 @@ if (fs.existsSync(envFile)) {
 // ── Safe to import lib modules now ────────────────────────────────────────────
 import { resetStateForTest, getStateStorageMode, getState, updateState, _setStateForTest, deleteConversationState } from "../lib/conversationState";
 import { processInboundMessage } from "../lib/inboundPipeline";
-import { formatBookingLinkMessage } from "../lib/clinicConfig";
+import { formatBookingLinkMessage, getBookingUrl } from "../lib/clinicConfig";
+import { handleBookingHandoff } from "../lib/bookingHandoff";
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -873,6 +874,186 @@ async function main() {
   assertNotContains("12c: device question gets no first-time question", hd3.assistantReply, "ilk kez");
   assertNotContains("12c: device question gets no name request", hd3.assistantReply, "isminizi");
   console.log(`  12c reply="${hd3.assistantReply.slice(0, 80)}"`);
+
+  // ── Section 13: Booking-link handoff (Meta route decision + outbound calls) ──
+  // These drive the ACTUAL production decision used by the Meta webhook route:
+  // handleBookingHandoff() with the real Meta sender seam mocked. They prove the
+  // completion reply + localized booking link are sent as two messages, the flag is
+  // written only after a successful send, retries survive a send failure, and the
+  // runtime env value (not a module-captured one) is what enables the handoff.
+  console.log("\n── 13. Booking-link handoff (Meta route decision + outbound) ──");
+
+  const savedBookingUrl = process.env.CLINIC_BOOKING_URL;
+  const BOOKING_URL = "https://clinic.example/book/xyz";
+
+  try {
+    process.env.CLINIC_BOOKING_URL = BOOKING_URL;
+
+    // Prove the runtime accessor reads process.env at CALL time. The clinicConfig
+    // module was imported long before this assignment, yet getBookingUrl() sees it —
+    // exactly the property the module-level capture lacked in production.
+    assertEqual("BH0: getBookingUrl reads runtime env at call time", getBookingUrl(), BOOKING_URL);
+
+    // Helper: run the pipeline to a Turkish completion, then replay the Meta route's
+    // outbound sequence (completion reply, then booking handoff) through one recorder
+    // so we can assert the exact number and content of outbound messages.
+    const driveTurkishCompletion = async (from: string) => {
+      await resetStateForTest(from);
+      await processInboundMessage({
+        from,
+        body: "Merhaba, cumartesi öğleden sonra full body lazer için boş musunuz?",
+        source: "whatsapp",
+      });
+      await processInboundMessage({ from, body: "Evet, ilk kez yaptıracağım.", source: "whatsapp" });
+      return processInboundMessage({ from, body: "Zeynep, +44 7700 900123", source: "whatsapp" });
+    };
+
+    // 13a. Configured URL + transition to complete + bookingLinkSent false → exactly two
+    // outbound messages: (1) completion reply, (2) localized (Turkish) booking link.
+    const PHONE_BH = "905551112460";
+    const complete = await driveTurkishCompletion(PHONE_BH);
+    assertEqual("BH1: reached complete", complete.stateAfter.stage, "complete");
+    assertEqual("BH1: bookingLinkSent false before handoff", Boolean(complete.stateAfter.bookingLinkSent), false);
+
+    const sent: Array<{ to: string; body: string }> = [];
+    const recorder = async (to: string, body: string) => { sent.push({ to, body }); };
+
+    // Route step: send completion reply first (mirrors the webhook route order)
+    await recorder(PHONE_BH, complete.assistantReply);
+    // Route step: booking handoff
+    const outcome = await handleBookingHandoff({
+      from: PHONE_BH,
+      stateAfter: complete.stateAfter,
+      channel: "meta",
+      send: recorder,
+    });
+
+    assertEqual("BH1: exactly two outbound messages", sent.length, 2);
+    assertEqual("BH1: message 1 is the completion reply", sent[0].body, complete.assistantReply);
+    assertContains("BH1: message 2 is the Turkish booking link", sent[1].body, "Randevu talebinizi buradan tamamlayabilirsiniz");
+    assertContains("BH1: message 2 contains the booking URL", sent[1].body, BOOKING_URL);
+    assertEqual("BH1: handoff reports sent=true", outcome.sent, true);
+    assertEqual("BH1: handoff skippedReason null", outcome.skippedReason, null);
+
+    // 13b. bookingLinkSent becomes true only AFTER the second send succeeded.
+    const stateAfterHandoff = await getState(PHONE_BH);
+    assertEqual("BH2: bookingLinkSent true after successful booking send", stateAfterHandoff.bookingLinkSent, true);
+
+    // 13c. Post-completion follow-up must NOT resend the link (already_sent skip).
+    const followUp = await processInboundMessage({ from: PHONE_BH, body: "Teşekkürler", source: "whatsapp" });
+    const sent2: Array<{ to: string; body: string }> = [];
+    const outcome2 = await handleBookingHandoff({
+      from: PHONE_BH,
+      stateAfter: followUp.stateAfter,
+      channel: "meta",
+      send: async (to, body) => { sent2.push({ to, body }); },
+    });
+    assertEqual("BH3: no outbound on post-completion follow-up", sent2.length, 0);
+    assertEqual("BH3: skippedReason=already_sent", outcome2.skippedReason, "already_sent");
+
+    // 13d. German completion sends the German booking-link text.
+    const PHONE_BH_DE = "905551112461";
+    await resetStateForTest(PHONE_BH_DE);
+    await _setStateForTest(PHONE_BH_DE, {
+      stage: "collect_name",
+      service: "laser hair removal",
+      treatmentArea: "full body",
+      serviceCategory: "laser",
+      firstTimeLaser: true,
+      preferredDate: "saturday",
+      detectedLanguage: "german",
+      history: [
+        { role: "user", content: "Hallo, ich möchte eine Ganzkörper-Laserbehandlung." },
+        { role: "assistant", content: "Dürfte ich Ihren Namen und Ihre Telefonnummer notieren?" },
+      ],
+      lastUpdated: Date.now(),
+    });
+    const deDone = await processInboundMessage({ from: PHONE_BH_DE, body: "Anna, +49 151 23456789", source: "whatsapp" });
+    assertEqual("BH4: DE reached complete", deDone.stateAfter.stage, "complete");
+    const sentDe: Array<{ to: string; body: string }> = [];
+    await handleBookingHandoff({
+      from: PHONE_BH_DE,
+      stateAfter: deDone.stateAfter,
+      channel: "meta",
+      send: async (to, body) => { sentDe.push({ to, body }); },
+    });
+    assertEqual("BH4: exactly one booking message", sentDe.length, 1);
+    assertContains("BH4: booking link is German (Terminanfrage)", sentDe[0].body, "Terminanfrage");
+    assertContains("BH4: German booking link contains URL", sentDe[0].body, BOOKING_URL);
+    assertNotContains("BH4: German booking link not English", sentDe[0].body, "You can complete");
+
+    // 13e. Second send FAILURE leaves bookingLinkSent false so a retry remains possible.
+    const PHONE_BH_FAIL = "905551112462";
+    const failDone = await driveTurkishCompletion(PHONE_BH_FAIL);
+    assertEqual("BH5: reached complete", failDone.stateAfter.stage, "complete");
+    const failOutcome = await handleBookingHandoff({
+      from: PHONE_BH_FAIL,
+      stateAfter: failDone.stateAfter,
+      channel: "meta",
+      send: async () => { throw new Error("simulated Meta send failure"); },
+    });
+    assertEqual("BH5: handoff reports sent=false on send failure", failOutcome.sent, false);
+    assertEqual("BH5: handoff attempted=true on send failure", failOutcome.attempted, true);
+    const failState = await getState(PHONE_BH_FAIL);
+    assertEqual("BH5: bookingLinkSent stays false after failed send (retry possible)", Boolean(failState.bookingLinkSent), false);
+
+    // Retry now succeeds and sets the flag.
+    const retryState = await getState(PHONE_BH_FAIL);
+    const sentRetry: Array<{ to: string; body: string }> = [];
+    const retryOutcome = await handleBookingHandoff({
+      from: PHONE_BH_FAIL,
+      stateAfter: retryState,
+      channel: "meta",
+      send: async (to, body) => { sentRetry.push({ to, body }); },
+    });
+    assertEqual("BH5: retry sends the link", sentRetry.length, 1);
+    assertEqual("BH5: retry reports sent=true", retryOutcome.sent, true);
+    assertEqual("BH5: bookingLinkSent true after successful retry", (await getState(PHONE_BH_FAIL)).bookingLinkSent, true);
+
+    // 13f. WhatsApp recipient preserves the "whatsapp:" prefix on the booking send.
+    const WA_FROM = "whatsapp:+905419473049";
+    await resetStateForTest(WA_FROM);
+    await _setStateForTest(WA_FROM, {
+      stage: "complete",
+      name: "Zeynep",
+      service: "laser hair removal",
+      treatmentArea: "full body",
+      serviceCategory: "laser",
+      firstTimeLaser: true,
+      preferredDate: "saturday",
+      detectedLanguage: "turkish",
+      history: [
+        { role: "user", content: "Zeynep, +44 7700 900123" },
+        { role: "assistant", content: "Teşekkür ederiz Zeynep." },
+      ],
+      lastUpdated: Date.now(),
+    });
+    const waState = await getState(WA_FROM);
+    const sentWa: Array<{ to: string; body: string }> = [];
+    await handleBookingHandoff({
+      from: WA_FROM,
+      stateAfter: waState,
+      channel: "meta",
+      send: async (to, body) => { sentWa.push({ to, body }); },
+    });
+    assertEqual("BH6: booking send used the whatsapp:-prefixed recipient", sentWa[0]?.to, WA_FROM);
+
+    // 13g. Missing booking URL skips safely (no_booking_url).
+    delete process.env.CLINIC_BOOKING_URL;
+    assertEqual("BH7: getBookingUrl empty when env unset", getBookingUrl(), "");
+    const sentNone: Array<{ to: string; body: string }> = [];
+    const noneOutcome = await handleBookingHandoff({
+      from: PHONE_BH,
+      stateAfter: { ...complete.stateAfter, bookingLinkSent: false },
+      channel: "meta",
+      send: async (to, body) => { sentNone.push({ to, body }); },
+    });
+    assertEqual("BH7: no outbound when booking URL missing", sentNone.length, 0);
+    assertEqual("BH7: skippedReason=no_booking_url", noneOutcome.skippedReason, "no_booking_url");
+  } finally {
+    if (savedBookingUrl !== undefined) process.env.CLINIC_BOOKING_URL = savedBookingUrl;
+    else delete process.env.CLINIC_BOOKING_URL;
+  }
 
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");
