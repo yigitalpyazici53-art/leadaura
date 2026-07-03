@@ -79,6 +79,9 @@ const SERVICE_PATTERNS: Array<[RegExp, string]> = [
   [/\bdiş\b|\bdental\b/i, "dental"],
   // English laser (most specific first) — [aá] also catches Spanish "láser"
   [/laser\s+hair\s+removal/i, "laser hair removal"],
+  // German compounds ("Ganzkörper-Laserbehandlung", "Laserepilation", "Haarentfernung")
+  // are single words, so \blaser\b never fires — match the compound forms explicitly.
+  [/laser[\s\-]*(?:behandlung|epilation|haarentfernung)|haarentfernung/i, "laser hair removal"],
   [/\bl[aá]ser\b/i, "laser hair removal"],
   // French/Spanish laser hair removal terms
   [/[eé]pilation|depilaci[oó]n/i, "laser hair removal"],
@@ -93,10 +96,22 @@ const SERVICE_PATTERNS: Array<[RegExp, string]> = [
   [/masaj|terapi/i, "masaj"],
 ];
 
+// Full-body expressions across all seven supported languages. Kept as one alternation so
+// every equivalent collapses to the single canonical "full body" value at extraction time.
+// German: "Ganzkörper(-Laserbehandlung/-Laserepilation/behandlung)", "am ganzen Körper",
+// "vollständige Körperbehandlung". No \b around non-ASCII letters (outside JS \w).
+const FULL_BODY_EXPRESSION =
+  "(?:tüm|tum|tam|komple)[\\s\\-]v[uü]cut|full[\\s\\-]body|entire\\s+body|whole\\s+body" +
+  "|ganzk[öo]rper|ganzen\\s+k[öo]rpers?|vollst[äa]ndige[nr]?\\s+k[öo]rperbehandlung" +
+  "|كامل\\s+الجسم|الجسم\\s+بالكامل" +
+  "|всего\\s+тела|вс[её]\\s+тело|полное\\s+тело" +
+  "|corps\\s+entier|tout\\s+le\\s+corps|[ée]pilation\\s+int[ée]grale" +
+  "|cuerpo\\s+completo|todo\\s+el\\s+cuerpo|depilaci[oó]n\\s+integral";
+
 // Body-area patterns for laser epilasyon — most specific first.
-// All full-body equivalents (Turkish and English) map to the single canonical "full body".
+// All full-body equivalents (7 languages) map to the single canonical "full body".
 const TREATMENT_AREA_PATTERNS: Array<[RegExp, string]> = [
-  [/(?:tüm|tum|tam)[\s\-]v[uü]cut|full[\s\-]body|entire\s+body|whole\s+body/i, "full body"],
+  [new RegExp(FULL_BODY_EXPRESSION, "i"), "full body"],
   [/koltuk\s*alt[ıi]/i, "koltuk altı"],
   [/bikini/i, "bikini"],
   [/bıyık|dudak\s*üst[üu]|üst\s*dudak/i, "dudak üstü"],
@@ -483,8 +498,7 @@ const NAME_INTRO_RE = /^(?:ben(?:\s+adım)?|benim\s+adım|ismim|adım|adı)\s+/i
 
 // Matches the exact canonical forms that all normalize to "full body".
 // Used to de-dup legacy stored values like "tüm vücut" in detectConflict.
-const FULL_BODY_CANONICAL_RE =
-  /^(?:(?:tüm|tum|tam)[\s\-]v[uü]cut|full[\s\-]body|entire\s+body|whole\s+body)$/i;
+const FULL_BODY_CANONICAL_RE = new RegExp(`^(?:${FULL_BODY_EXPRESSION})$`, "i");
 
 /**
  * Maps known equivalent treatment-area phrases to one canonical internal value.

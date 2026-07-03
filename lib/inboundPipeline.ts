@@ -25,7 +25,9 @@ import { buildOwnerAlert } from "./twilio";
 import { clinicConfig, getStartingPriceFor } from "./clinicConfig";
 import {
   fallbackText,
+  firstTimeQuestionText,
   formatStartingPriceSentence,
+  enforceExactPriceLiteral,
   completionReply,
   deviceBrandsReply,
   locationReply,
@@ -67,7 +69,9 @@ function buildQualificationFallbackReply(state: ConversationState): string {
   const lang = state.detectedLanguage;
 
   if (cat === "laser") {
-    const question = fallbackText("firstTimeQuestion", lang);
+    // Laser-specific natural wording when the service is laser-family; generic otherwise
+    // (the laser category also covers botox/filler/facial, where "laser" would be wrong).
+    const question = firstTimeQuestionText(lang, state.service);
     // A volunteered/requested slot is acknowledged as "we'll check availability" — never confirmed.
     if (state.availabilityInquiry || state.preferredDate || state.preferredTime) {
       return `${fallbackText("availabilityAck", lang)} ${question}`;
@@ -289,6 +293,13 @@ export async function processInboundMessage(
           informationalTurn: informationalOnly && !postCompletion,
           postCompletion,
         });
+        // The configured starting price is an opaque literal: if the model localized its
+        // punctuation or currency token ("₺2.500" → "₺2,500" / "2.500 TL" / "TRY 2,500"),
+        // deterministically restore the exact configured string.
+        const configuredPrice = getStartingPriceFor(stateUpdated.serviceCategory);
+        if (configuredPrice) {
+          assistantReply = enforceExactPriceLiteral(assistantReply, configuredPrice);
+        }
       } catch (err) {
         console.error("[Pipeline] Anthropic failed:", err instanceof Error ? err.message : err);
         console.log(`[Pipeline] using static fallback reply (stage: ${stateUpdated.stage})`);

@@ -35,6 +35,7 @@ function buildClinicContextBlock(state: ConversationState): string {
       `Clinic-approved starting prices: ${priceLines.join("; ")}. ` +
       `When the patient asks about price for one of these verticals, share that vertical's starting price IMMEDIATELY in your reply — do not defer to a generic pricing answer first. ` +
       `Keep the configured amount exactly as written — do not round up, modify, convert, or invent amounts. ` +
+      `Copy the configured starting-price string exactly as written. Do not localize its punctuation, currency symbol, spacing, or digit grouping — never swap a period for a comma, move or translate the currency symbol, or convert it to a currency code. The price substring stays byte-for-byte identical in every reply language. ` +
       `Phrase it naturally in the reply language: English "Prices start from X"; Turkish "X'den başlamaktadır" with the correct apostrophe suffix (e.g. "${exampleTr} başlamaktadır") — never glue "den/dan" directly to the number. ` +
       `If the configured value already contains starting-price wording, do not repeat it (never "başlangıç fiyatından başlamaktadır"). ` +
       `Make clear it is a starting price, not a final quote, and that the final price depends on the treatment plan (e.g. sessions, grafts, or teeth count). Then ask exactly ONE qualification question. ` +
@@ -103,7 +104,9 @@ function startingPriceDirective(state: ConversationState): string {
     `The patient asked about price and the clinic has a configured starting price for this treatment. ` +
     `Begin the reply by stating that prices start from exactly "${price}" — a starting price, not a final quote — ` +
     `phrased naturally in the reply language (English: "Prices start from ${price}"; Turkish: "${turkishAblative(price)} başlamaktadır") ` +
-    `and that the final price depends on the exact treatment plan. Then, in the same message: `
+    `and that the final price depends on the exact treatment plan. ` +
+    `Copy the configured starting-price string exactly as written. Do not localize its punctuation, currency symbol, spacing, or digit grouping. ` +
+    `Then, in the same message: `
   );
 }
 
@@ -189,7 +192,11 @@ function buildQualificationTask(state: ConversationState): string {
       state.availabilityInquiry || state.preferredDate || state.preferredTime
         ? "First, briefly acknowledge that you have noted their preferred day/time and the clinic team will confirm availability and follow up — do NOT confirm or guarantee the appointment yourself. Then, in the same message, "
         : "";
-    return `${ackAvailability}Ask whether this is the patient's first time having this treatment. Ask nothing else. Reference the patient's OWN stated day/time — never substitute a different day. Example (TR): 'Talebinizi not aldım. Ekibimiz uygunluğu kontrol edip size dönüş yapacaktır. Bu işlemi ilk kez mi yaptıracaksınız?' Example (EN): 'Would this be your first time having this treatment?'`;
+    return (
+      `${ackAvailability}Ask whether this is the patient's first time having this treatment. Ask nothing else. Reference the patient's OWN stated day/time — never substitute a different day. ` +
+      `Use the specific treatment name when known — never a vague generic phrase like "für diese Leistung", "pour cette prestation", or "este tratamiento" when the treatment is laser. Keep the formal register (German "Sie/Ihre", French "vous/votre", Spanish "su") and gender-neutral Arabic wording. ` +
+      `Preferred wording — TR: 'Bu işlemi ilk kez mi yaptırıyorsunuz?' EN: 'Would this be your first laser treatment?' DE: 'Ist dies Ihre erste Laserbehandlung?' AR: 'هل هذه أول مرة تجري فيها إزالة الشعر بالليزر؟' RU: 'Вы впервые планируете лазерную эпиляцию?' FR: 'S'agit-il de votre première épilation laser ?' ES: '¿Sería esta su primera sesión de depilación láser?'`
+    );
   }
   if (cat === "hair_transplant") {
     if (state.estimatedGrafts !== undefined) {

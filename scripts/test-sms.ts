@@ -56,7 +56,9 @@ import { clinicConfig, formatBookingLinkMessage } from "../lib/clinicConfig";
 import {
   SUPPORTED_LANGUAGES,
   fallbackText,
+  firstTimeQuestionText,
   formatStartingPriceSentence,
+  enforceExactPriceLiteral,
   turkishAblative,
   completionReply,
   type FallbackKind,
@@ -2040,7 +2042,7 @@ async function testConfiguredStartingPrices(): Promise<void> {
     const en = await processInboundMessage({ from: PHONE_EN, body: "Hi, how much is full body laser hair removal?" });
     assertContains("fallback EN laser: exact configured price", en.assistantReply, "2.500 TL");
     assertContains("fallback EN laser: natural 'starts from' wording", en.assistantReply, "starts from 2.500 TL");
-    assertContains("fallback EN laser: asks first-time question", en.assistantReply, "first time");
+    assertContains("fallback EN laser: asks first-time question", en.assistantReply, "first laser treatment");
     assertSms("fallback EN laser: SMS-safe", en.assistantReply);
 
     // 3. Hair transplant: own price only; price NOT repeated on the next turn
@@ -2329,9 +2331,9 @@ async function testMultilingualStaticFallbacks(): Promise<void> {
     clinicConfig.startingPrices.laser = "2.500 TL";
 
     const cases: Array<{ lang: string; body: string; expect: string[] }> = [
-      { lang: "german",  body: "Hallo, wie viel kostet eine Laser-Haarentfernung?", expect: ["beginnen ab 2.500 TL", "Behandlung"] },
-      { lang: "french",  body: "Bonjour, combien coûte l'épilation au laser ?",      expect: ["partir de 2.500 TL", "première fois"] },
-      { lang: "spanish", body: "Hola, ¿cuánto cuesta la depilación láser?",          expect: ["desde 2.500 TL", "primera vez"] },
+      { lang: "german",  body: "Hallo, wie viel kostet eine Laser-Haarentfernung?", expect: ["beginnen bei 2.500 TL", "erste Laserbehandlung"] },
+      { lang: "french",  body: "Bonjour, combien coûte l'épilation au laser ?",      expect: ["commencent à 2.500 TL", "première épilation laser"] },
+      { lang: "spanish", body: "Hola, ¿cuánto cuesta la depilación láser?",          expect: ["empiezan en 2.500 TL", "primera sesión de depilación láser"] },
       { lang: "russian", body: "Здравствуйте, сколько стоит лазерная эпиляция?",     expect: ["от 2.500 TL", "впервые"] },
       { lang: "arabic",  body: "مرحبا، كم سعر إزالة الشعر بالليزر؟",                  expect: ["2.500 TL", "أول مرة"] },
     ];
@@ -2528,6 +2530,263 @@ async function testCompletedStateBehavior(): Promise<void> {
   }
 }
 
+// ── Multilingual quality pass: full-body extraction (7 languages) ──────────
+
+async function testFullBodyMultilingualExtraction(): Promise<void> {
+  header("Multilingual quality: full-body treatment-area extraction (7 languages)");
+
+  // Unit: every full-body expression maps to the canonical "full body"
+  const expressions: Array<[string, string]> = [
+    // German
+    ["german", "Ganzkörper"],
+    ["german", "Ganzkörperbehandlung"],
+    ["german", "Ganzkörper-Laserbehandlung"],
+    ["german", "Ganzkörper-Laserepilation"],
+    ["german", "Laserbehandlung am ganzen Körper"],
+    ["german", "vollständige Körperbehandlung"],
+    // Turkish
+    ["turkish", "full body"],
+    ["turkish", "tüm vücut"],
+    ["turkish", "komple vücut"],
+    ["turkish", "tüm vücut lazer"],
+    // English
+    ["english", "full body"],
+    ["english", "whole body"],
+    ["english", "full-body laser"],
+    // Arabic
+    ["arabic", "كامل الجسم"],
+    ["arabic", "لكامل الجسم"],
+    ["arabic", "الجسم بالكامل"],
+    // Russian
+    ["russian", "всего тела"],
+    ["russian", "всё тело"],
+    ["russian", "полное тело"],
+    // French
+    ["french", "corps entier"],
+    ["french", "tout le corps"],
+    ["french", "épilation intégrale"],
+    // Spanish
+    ["spanish", "cuerpo completo"],
+    ["spanish", "todo el cuerpo"],
+    ["spanish", "depilación integral"],
+  ];
+  for (const [lang, expr] of expressions) {
+    assertEqual(`full-body (${lang}): "${expr}" → "full body"`, extractSlots(expr).treatmentArea, "full body");
+  }
+
+  // The production bug: German full-body price inquiry must set the area AND the service
+  const de = extractSlots("Was kostet eine Ganzkörper-Laserbehandlung?");
+  assertEqual("DE bug: treatmentArea = full body", de.treatmentArea, "full body");
+  assertEqual("DE bug: service = laser hair removal", de.service, "laser hair removal");
+  assertEqual("DE bug: serviceCategory = laser", de.serviceCategory, "laser");
+  assertEqual("DE bug: priceInquired = true", de.priceInquired, true);
+  assertEqual("DE bug: detectedLanguage = german", de.detectedLanguage, "german");
+
+  // Pipeline (static path): each full-body price inquiry advances straight to the
+  // first-time question in the message language — never asks for the area again.
+  const savedKey = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  try {
+    const cases: Array<{ lang: string; body: string; firstTime: string; areaAsk: string }> = [
+      { lang: "german",  body: "Was kostet eine Ganzkörper-Laserbehandlung?",                 firstTime: "Ist dies Ihre erste Laserbehandlung?",                  areaAsk: "welche Behandlung oder Zone" },
+      { lang: "turkish", body: "Merhaba, tüm vücut lazer fiyatı ne kadar?",                   firstTime: "Bu işlemi ilk kez mi yaptırıyorsunuz?",                 areaAsk: "Hangi bölge" },
+      { lang: "english", body: "Hi, how much is a whole body laser treatment?",               firstTime: "Would this be your first laser treatment?",             areaAsk: "Which area" },
+      { lang: "arabic",  body: "كم سعر إزالة الشعر بالليزر لكامل الجسم؟",                      firstTime: "هل هذه أول مرة تجري فيها إزالة الشعر بالليزر؟",         areaAsk: "ما المنطقة" },
+      { lang: "russian", body: "Сколько стоит лазерная эпиляция всего тела?",                 firstTime: "Вы впервые планируете лазерную эпиляцию?",              areaAsk: "Какая зона" },
+      { lang: "french",  body: "Bonjour, quel est le prix d'une épilation laser du corps entier ?", firstTime: "S'agit-il de votre première épilation laser ?",    areaAsk: "Quelle zone" },
+      { lang: "spanish", body: "Hola, ¿cuánto cuesta la depilación láser de cuerpo completo?", firstTime: "¿Sería esta su primera sesión de depilación láser?",   areaAsk: "Qué zona" },
+    ];
+    let seq = 3001;
+    for (const c of cases) {
+      const phone = `+90500000${seq++}`;
+      await resetState(phone);
+      const r = await processInboundMessage({ from: phone, body: c.body });
+      assertEqual(`${c.lang} full-body inquiry: treatmentArea = full body`, r.stateAfter.treatmentArea, "full body");
+      assertEqual(`${c.lang} full-body inquiry: detectedLanguage`, r.stateAfter.detectedLanguage, c.lang);
+      assertEqual(`${c.lang} full-body inquiry: advances to first-time (collect_qualification)`, r.stateAfter.stage, "collect_qualification");
+      assertContains(`${c.lang} full-body inquiry: asks preferred first-time question`, r.assistantReply, c.firstTime);
+      assertNotContains(`${c.lang} full-body inquiry: does NOT ask for the area again`, r.assistantReply, c.areaAsk);
+      assertNotContains(`${c.lang} full-body inquiry: no 'für diese Leistung'`, r.assistantReply, "für diese Leistung");
+      assertNotContains(`${c.lang} full-body inquiry: no 'pour cette prestation'`, r.assistantReply, "pour cette prestation");
+    }
+  } finally {
+    if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
+  }
+}
+
+// ── Multilingual quality: exact configured-price preservation ───────────────
+
+async function testExactPricePreservation(): Promise<void> {
+  header("Multilingual quality: configured price is an opaque literal (byte-for-byte)");
+
+  // Unit: enforceExactPriceLiteral restores mangled model output to the exact literal
+  assertEqual(
+    "enforce: ₺2,500 → ₺2.500",
+    enforceExactPriceLiteral("Prices start from ₺2,500 for full body.", "₺2.500"),
+    "Prices start from ₺2.500 for full body."
+  );
+  assertEqual(
+    "enforce: 2.500 TL → ₺2.500",
+    enforceExactPriceLiteral("Los precios empiezan en 2.500 TL.", "₺2.500"),
+    "Los precios empiezan en ₺2.500."
+  );
+  assertEqual(
+    "enforce: TRY 2,500 → ₺2.500",
+    enforceExactPriceLiteral("TRY 2,500 is our starting price.", "₺2.500"),
+    "₺2.500 is our starting price."
+  );
+  assertEqual(
+    "enforce: ungrouped 2500 TL → ₺2.500",
+    enforceExactPriceLiteral("Цены начинаются от 2500 TL.", "₺2.500"),
+    "Цены начинаются от ₺2.500."
+  );
+  assertEqual(
+    "enforce: exact literal untouched",
+    enforceExactPriceLiteral("تبدأ الأسعار من ₺2.500؛", "₺2.500"),
+    "تبدأ الأسعار من ₺2.500؛"
+  );
+  assertEqual(
+    "enforce: reversed config (2.500 TL) restores ₺2.500 → 2.500 TL",
+    enforceExactPriceLiteral("Prices start from ₺2.500.", "2.500 TL"),
+    "Prices start from 2.500 TL."
+  );
+  assertEqual(
+    "enforce: €1,250 → €1.250",
+    enforceExactPriceLiteral("Prices start from €1,250.", "€1.250"),
+    "Prices start from €1.250."
+  );
+  assertEqual(
+    "enforce: USD 3.000 → USD 3,000",
+    enforceExactPriceLiteral("Around USD 3.000 to start.", "USD 3,000"),
+    "Around USD 3,000 to start."
+  );
+  assertEqual(
+    "enforce: 'from 40 EUR' already exact → untouched",
+    enforceExactPriceLiteral("Prices start from 40 EUR.", "from 40 EUR"),
+    "Prices start from 40 EUR."
+  );
+  assertEqual(
+    "enforce: longer number never partially rewritten (₺2,500,000)",
+    enforceExactPriceLiteral("Ciro ₺2,500,000 oldu.", "₺2.500"),
+    "Ciro ₺2,500,000 oldu."
+  );
+  assertEqual(
+    "enforce: unrelated digits untouched",
+    enforceExactPriceLiteral("Saat 14:00 uygun, 3000 grafts.", "₺2.500"),
+    "Saat 14:00 uygun, 3000 grafts."
+  );
+
+  // Unit: unusual opaque configured values survive sentence formatting verbatim
+  for (const opaque of ["2.500 TL", "€1.250", "USD 3,000", "from 40 EUR"]) {
+    for (const lang of SUPPORTED_LANGUAGES) {
+      const sentence = formatStartingPriceSentence(opaque, lang);
+      if (sentence.includes(opaque)) {
+        pass(`opaque "${opaque}" verbatim in ${lang} sentence`);
+      } else {
+        fail(`opaque "${opaque}" verbatim in ${lang} sentence`, `got "${sentence}"`);
+      }
+    }
+  }
+
+  // Prompt: exact-copy instruction is present when a price is configured
+  const savedPrices = { ...clinicConfig.startingPrices };
+  const savedKey = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  try {
+    clinicConfig.startingPrices.laser = "₺2.500";
+    const promptState: ConversationState = {
+      stage: "collect_qualification",
+      service: "laser hair removal",
+      treatmentArea: "full body",
+      serviceCategory: "laser",
+      priceInquired: true,
+      history: [],
+      lastUpdated: Date.now(),
+    };
+    const prompt = buildSystemPrompt(promptState);
+    assertContains("prompt: exact-copy instruction (context block)", prompt, "Do not localize its punctuation, currency symbol, spacing, or digit grouping");
+    assertContains("prompt: directive quotes ₺2.500 exactly", prompt.split("Next step:")[1] ?? "", '"₺2.500"');
+
+    // Pipeline (static path): the literal ₺2.500 survives byte-for-byte in all 7 languages
+    const inquiries: Array<[string, string]> = [
+      ["turkish", "Merhaba, tüm vücut lazer fiyatı ne kadar?"],
+      ["english", "Hi, how much is full body laser?"],
+      ["german",  "Was kostet eine Ganzkörper-Laserbehandlung?"],
+      ["arabic",  "كم سعر إزالة الشعر بالليزر لكامل الجسم؟"],
+      ["russian", "Сколько стоит лазерная эпиляция всего тела?"],
+      ["french",  "Bonjour, combien coûte l'épilation laser du corps entier ?"],
+      ["spanish", "Hola, ¿cuánto cuesta la depilación láser de cuerpo completo?"],
+    ];
+    let seq = 3101;
+    for (const [lang, body] of inquiries) {
+      const phone = `+90500000${seq++}`;
+      await resetState(phone);
+      const r = await processInboundMessage({ from: phone, body });
+      const reply = r.assistantReply;
+      const occurrences = reply.split("₺2.500").length - 1;
+      assertEqual(`${lang}: reply contains "₺2.500" exactly once`, occurrences, 1);
+      assertNotContains(`${lang}: no localized "₺2,500"`, reply, "₺2,500");
+      assertNotContains(`${lang}: no converted "2.500 TL"`, reply, "2.500 TL");
+      if (/\bTRY\b/.test(reply)) {
+        fail(`${lang}: no "TRY" currency code`, `found TRY in "${reply}"`);
+      } else {
+        pass(`${lang}: no "TRY" currency code`);
+      }
+      console.log(`  [${lang}]: "${reply.slice(0, 90)}"`);
+    }
+  } finally {
+    clinicConfig.startingPrices.laser = savedPrices.laser;
+    clinicConfig.startingPrices.hairTransplant = savedPrices.hairTransplant;
+    clinicConfig.startingPrices.dental = savedPrices.dental;
+    if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
+  }
+}
+
+// ── Multilingual quality: natural first-time qualification wording ──────────
+
+function testFirstTimeQuestionWording(): void {
+  header("Multilingual quality: preferred first-time question wording");
+
+  const preferred: Record<string, string> = {
+    turkish: "Bu işlemi ilk kez mi yaptırıyorsunuz?",
+    english: "Would this be your first laser treatment?",
+    german:  "Ist dies Ihre erste Laserbehandlung?",
+    arabic:  "هل هذه أول مرة تجري فيها إزالة الشعر بالليزر؟",
+    russian: "Вы впервые планируете лазерную эпиляцию?",
+    french:  "S'agit-il de votre première épilation laser ?",
+    spanish: "¿Sería esta su primera sesión de depilación láser?",
+  };
+  for (const lang of SUPPORTED_LANGUAGES) {
+    assertEqual(`preferred laser first-time question (${lang})`, fallbackText("firstTimeLaserQuestion", lang), preferred[lang]);
+    // Awkward generic wording must never appear
+    assertNotContains(`no 'für diese Leistung' (${lang})`, fallbackText("firstTimeLaserQuestion", lang), "für diese Leistung");
+    assertNotContains(`no 'pour cette prestation' (${lang})`, fallbackText("firstTimeLaserQuestion", lang), "pour cette prestation");
+  }
+
+  // Arabic wording is gender-neutral: no feminine-addressed "تخضعين"
+  assertNotContains("Arabic laser question avoids gendered form", fallbackText("firstTimeLaserQuestion", "arabic"), "تخضعين");
+  // Formal register: German Sie/Ihre, French vous/votre, Spanish su (matches the rest of the copy)
+  assertContains("German uses formal Ihre", fallbackText("firstTimeLaserQuestion", "german"), "Ihre");
+  assertContains("French uses formal votre", fallbackText("firstTimeLaserQuestion", "french"), "votre");
+  assertContains("Spanish uses formal su", fallbackText("firstTimeLaserQuestion", "spanish"), " su ");
+
+  // Service-aware selection: laser-family services get the laser question, other
+  // aesthetic services keep the generic (non-laser) question.
+  assertEqual("laser service → laser question (EN)", firstTimeQuestionText("english", "laser hair removal"), preferred.english);
+  assertEqual("lazer epilasyon → laser question (TR)", firstTimeQuestionText("turkish", "lazer epilasyon"), preferred.turkish);
+  assertEqual(
+    "botox service → generic question (EN)",
+    firstTimeQuestionText("english", "estetik uygulama"),
+    fallbackText("firstTimeQuestion", "english")
+  );
+  assertNotContains("generic question never claims laser (EN)", firstTimeQuestionText("english", "estetik uygulama"), "laser");
+
+  // Sanitizer keeps every preferred question intact (Arabic/Cyrillic/accents preserved)
+  for (const lang of SUPPORTED_LANGUAGES) {
+    assertEqual(`sanitizer preserves first-time question (${lang})`, sanitizeReplyText(preferred[lang]), preferred[lang]);
+  }
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -2569,6 +2828,9 @@ async function main() {
   await testMultilingualStaticFallbacks();
   await testVerticalIsolationHardening();
   await testCompletedStateBehavior();
+  await testFullBodyMultilingualExtraction();
+  await testExactPricePreservation();
+  testFirstTimeQuestionWording();
 
   // End-to-end Claude API tests (require ANTHROPIC_API_KEY)
   const hasApiKey = !!process.env.ANTHROPIC_API_KEY;

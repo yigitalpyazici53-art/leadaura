@@ -115,14 +115,64 @@ export function formatStartingPriceSentence(price: string, language?: string): s
   }
 
   switch (lang) {
-    case "turkish": return `Fiyatlar ${turkishAblative(p)} başlamaktadır; net fiyat plana göre değişir.`;
-    case "german":  return `Die Preise beginnen ab ${p}; der Endpreis hängt vom Behandlungsplan ab.`;
+    case "turkish": return `Fiyatlarımız ${turkishAblative(p)} başlamaktadır; net fiyat plana bağlıdır.`;
+    case "german":  return `Die Preise beginnen bei ${p}; der Endpreis hängt vom Behandlungsplan ab.`;
     case "arabic":  return `تبدأ الأسعار من ${p}؛ ويعتمد السعر النهائي على خطة العلاج.`;
     case "russian": return `Цены начинаются от ${p}; итоговая стоимость зависит от плана лечения.`;
-    case "french":  return `Les prix commencent à partir de ${p} ; le prix final dépend du plan de traitement.`;
-    case "spanish": return `Los precios comienzan desde ${p}; el precio final depende del plan.`;
+    case "french":  return `Les tarifs commencent à ${p} ; le prix final dépend du plan de traitement.`;
+    case "spanish": return `Los precios empiezan en ${p}; el precio final depende del plan.`;
     default:        return `Pricing starts from ${p}; final cost depends on the plan.`;
   }
+}
+
+// ── Exact configured-price enforcement ────────────────────────────────────────
+// The configured starting price is an OPAQUE LITERAL: it must appear byte-for-byte in
+// every reply, in every language. AI replies sometimes localize digit grouping
+// ("₺2.500" → "₺2,500") or swap the currency token ("₺2.500" → "2.500 TL" / "TRY 2,500").
+// This deterministically rewrites any such variant back to the exact configured string.
+
+const CURRENCY_FAMILIES: string[][] = [
+  ["₺", "TL", "TRY", "lira"],
+  ["€", "EUR", "euro"],
+  ["$", "USD", "dollar"],
+  ["£", "GBP", "pound"],
+];
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Alphabetic tokens need word boundaries ("TL" must not match inside a word); currency
+// symbols are non-word chars where \b misbehaves, so they are matched bare.
+function currencyTokenPattern(token: string): string {
+  return /^[a-z]+$/i.test(token) ? `\\b${token}\\b` : escapeRe(token);
+}
+
+export function enforceExactPriceLiteral(reply: string, configuredPrice: string): string {
+  const p = configuredPrice.trim();
+  if (!p) return reply;
+  // Reply already carries the exact literal — leave it untouched.
+  if (reply.includes(p)) return reply;
+
+  const numMatch = p.match(/\d[\d.,\s]*\d|\d/);
+  if (!numMatch) return reply;
+  const digits = numMatch[0].replace(/\D/g, "");
+  if (!digits) return reply;
+
+  const family = CURRENCY_FAMILIES.find((f) =>
+    f.some((tok) => p.toLowerCase().includes(tok.toLowerCase()))
+  );
+  if (!family) return reply;
+
+  // Same digit sequence with ANY grouping separators (2.500 / 2,500 / 2 500 / 2500),
+  // guarded so it never matches inside a longer number ("2.500" in "2.500.000").
+  const flexibleNumber = digits.split("").join("[.,\\s]?");
+  const cur = family.map(currencyTokenPattern).join("|");
+  const variant = new RegExp(
+    `(?<![\\d.,])(?:(?:${cur})\\s*${flexibleNumber}|${flexibleNumber}\\s*(?:${cur}))(?!\\d)(?![.,]\\d)`,
+    "gi"
+  );
+  return reply.replace(variant, p);
 }
 
 // ── Static fallback dictionary ────────────────────────────────────────────────
@@ -132,6 +182,7 @@ export function formatStartingPriceSentence(price: string, language?: string): s
 export type FallbackKind =
   | "safePrice"
   | "firstTimeQuestion"
+  | "firstTimeLaserQuestion"
   | "graftQuestion"
   | "travelQuestion"
   | "dentalScopeQuestion"
@@ -158,13 +209,25 @@ const FALLBACKS: Record<FallbackKind, Record<SupportedLanguage, string>> = {
     spanish: "El precio depende del plan de tratamiento; nuestro equipo le dará los detalles.",
   },
   firstTimeQuestion: {
-    turkish: "Bu işlemi ilk kez mi yaptıracaksınız?",
+    turkish: "Bu işlemi ilk kez mi yaptırıyorsunuz?",
     english: "Is this your first time having this treatment?",
     german:  "Ist dies Ihre erste Behandlung dieser Art?",
-    arabic:  "هل هذه أول مرة تخضعون فيها لهذا الإجراء؟",
+    arabic:  "هل هذه أول مرة تجري فيها هذا الإجراء؟",
     russian: "Вы впервые проходите эту процедуру?",
     french:  "Est-ce la première fois que vous faites ce soin ?",
-    spanish: "¿Es la primera vez que se realiza este tratamiento?",
+    spanish: "¿Sería esta su primera sesión de este tratamiento?",
+  },
+  // Laser-specific first-time question — the preferred natural wording when the service
+  // is known to be laser. Formal register (Sie/vous/su); Arabic uses the gender-neutral
+  // form ("تجري" instead of the feminine "تخضعين").
+  firstTimeLaserQuestion: {
+    turkish: "Bu işlemi ilk kez mi yaptırıyorsunuz?",
+    english: "Would this be your first laser treatment?",
+    german:  "Ist dies Ihre erste Laserbehandlung?",
+    arabic:  "هل هذه أول مرة تجري فيها إزالة الشعر بالليزر؟",
+    russian: "Вы впервые планируете лазерную эпиляцию?",
+    french:  "S'agit-il de votre première épilation laser ?",
+    spanish: "¿Sería esta su primera sesión de depilación láser?",
   },
   graftQuestion: {
     turkish: "Yaklaşık kaç greft düşündüğünüzü biliyor musunuz?",
@@ -296,6 +359,19 @@ const FALLBACKS: Record<FallbackKind, Record<SupportedLanguage, string>> = {
 
 export function fallbackText(kind: FallbackKind, language?: string): string {
   return FALLBACKS[kind][resolveLanguage(language)];
+}
+
+// Laser-family service names across the supported languages (canonical service strings
+// plus raw patient phrasing). Used to pick the specific laser wording over the generic
+// "this treatment" question — never generic when a laser phrase is known.
+const LASER_SERVICE_NAME_RE =
+  /laser|lazer|epilasyon|[ée]pilation|depilaci[oó]n|haarentfernung|лазер|эпиляц|ليزر/i;
+
+// First-time qualification question in the preferred natural wording: laser-specific
+// when the known service is laser-family, generic otherwise.
+export function firstTimeQuestionText(language?: string, service?: string): string {
+  const laserKnown = !!service && LASER_SERVICE_NAME_RE.test(service);
+  return fallbackText(laserKnown ? "firstTimeLaserQuestion" : "firstTimeQuestion", language);
 }
 
 // ── Completion reply ──────────────────────────────────────────────────────────
