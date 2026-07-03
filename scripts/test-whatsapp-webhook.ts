@@ -631,8 +631,8 @@ async function main() {
   assertEqual("LQ1: serviceCategory = laser", lq1.stateAfter.serviceCategory, "laser");
   assertEqual("LQ1: firstTimeLaser missing (required field)", lq1.stateAfter.firstTimeLaser, undefined);
   assertEqual("LQ1: stage = collect_qualification (exact)", lq1.stateAfter.stage, "collect_qualification");
-  assertContains("LQ1: reply asks first-time status", lq1.assistantReply, "first time");
-  assertContains("LQ1: reply uses safe pricing language", lq1.assistantReply, "pricing");
+  assertContains("LQ1: reply asks first-time status in Turkish", lq1.assistantReply, "ilk kez");
+  assertContains("LQ1: reply uses Turkish safe pricing language", lq1.assistantReply, "fiyat");
   assertNoContactRequest("LQ1: reply does not request name/phone", lq1.assistantReply);
   assertNoInventedPrice("LQ1: reply invents no exact price", lq1.assistantReply);
   console.log(`  LQ1 stage=${lq1.stateAfter.stage} reply="${lq1.assistantReply.slice(0, 90)}"`);
@@ -653,10 +653,10 @@ async function main() {
   assertContains("AV1: preferredTime captured", av1.stateAfter.preferredTime ?? "", "öğleden sonra");
   assertEqual("AV1: availabilityInquiry = true", av1.stateAfter.availabilityInquiry, true);
   assertEqual("AV1: firstTimeLaser still missing", av1.stateAfter.firstTimeLaser, undefined);
-  assertContains("AV1: reply says team will check availability", av1.assistantReply, "availability");
+  assertContains("AV1: reply says team will check availability (Turkish)", av1.assistantReply, "uygunluğu kontrol");
   assertNotContains("AV1: reply does not confirm the appointment", av1.assistantReply, "confirmed");
   assertNotContains("AV1: reply does not say booked", av1.assistantReply, "booked");
-  assertContains("AV1: reply still asks first-time status", av1.assistantReply, "first time");
+  assertContains("AV1: reply still asks first-time status in Turkish", av1.assistantReply, "ilk kez");
   assertNoContactRequest("AV1: reply does not request name/phone", av1.assistantReply);
   console.log(`  AV1 stage=${av1.stateAfter.stage} date=${av1.stateAfter.preferredDate} time=${av1.stateAfter.preferredTime} avail=${av1.stateAfter.availabilityInquiry}`);
   console.log(`       reply="${av1.assistantReply.slice(0, 90)}"`);
@@ -825,6 +825,54 @@ async function main() {
   // 11d. Direct formatBookingLinkMessage language selection (default when unknown).
   assertContains("11d: unknown language defaults to English link", formatBookingLinkMessage(LINK_URL, undefined), "You can complete");
   assertContains("11d: turkish language selects Turkish link", formatBookingLinkMessage(LINK_URL, "turkish"), "tamamlayabilirsiniz");
+
+  // ── Section 12: Completed-state + informational behavior (hardening) ────────
+  // The booking link is guarded by bookingLinkSent in the webhook routes; here we prove
+  // the pipeline keeps that flag and the completed lead intact across follow-up turns,
+  // and that informational questions never re-open qualification robotically.
+  console.log("\n── 12. Completed-state + informational hardening ──");
+
+  const PHONE_HD = "905551112450";
+  await resetStateForTest(PHONE_HD);
+  await _setStateForTest(PHONE_HD, {
+    stage: "complete",
+    name: "Zeynep",
+    phone: "+447700900123",
+    service: "lazer epilasyon",
+    treatmentArea: "full body",
+    serviceCategory: "laser",
+    firstTimeLaser: true,
+    preferredDate: "cumartesi",
+    detectedLanguage: "turkish",
+    bookingLinkSent: true,
+    history: [
+      { role: "user", content: "Zeynep, +44 7700 900123" },
+      { role: "assistant", content: "Teşekkür ederiz Zeynep. full body için randevu talebinizi aldık. Ekibimiz kısa süre içinde sizinle iletişime geçecektir." },
+    ],
+    lastUpdated: Date.now(),
+  });
+
+  // 12a. Ordinary follow-up: no completion repeat, no link resend condition, lead intact
+  const hd1 = await processInboundMessage({ from: PHONE_HD, body: "Teşekkürler, beklemedeyim.", source: "whatsapp" });
+  assertEqual("12a: stage stays complete", hd1.stateAfter.stage, "complete");
+  assertEqual("12a: name intact", hd1.stateAfter.name, "Zeynep");
+  assertEqual("12a: bookingLinkSent still true (route will not resend)", hd1.stateAfter.bookingLinkSent, true);
+  assertNotContains("12a: completion message not repeated", hd1.assistantReply, "randevu talebinizi aldık");
+  console.log(`  12a reply="${hd1.assistantReply.slice(0, 80)}"`);
+
+  // 12b. Instagram question post-completion: informational answer, no qualification
+  const hd2 = await processInboundMessage({ from: PHONE_HD, body: "Instagram'dan da yazabilir miyim?", source: "whatsapp" });
+  assertContains("12b: Instagram redirect mentions WhatsApp", hd2.assistantReply, "WhatsApp");
+  assertNotContains("12b: no first-time question", hd2.assistantReply, "ilk kez");
+  assertEqual("12b: lead fields untouched", hd2.stateAfter.phone, "+447700900123");
+
+  // 12c. Fresh conversation, device question first: answered without qualification
+  const PHONE_HD2 = "905551112451";
+  await resetStateForTest(PHONE_HD2);
+  const hd3 = await processInboundMessage({ from: PHONE_HD2, body: "Hangi lazer cihazını kullanıyorsunuz?", source: "whatsapp" });
+  assertNotContains("12c: device question gets no first-time question", hd3.assistantReply, "ilk kez");
+  assertNotContains("12c: device question gets no name request", hd3.assistantReply, "isminizi");
+  console.log(`  12c reply="${hd3.assistantReply.slice(0, 80)}"`);
 
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");

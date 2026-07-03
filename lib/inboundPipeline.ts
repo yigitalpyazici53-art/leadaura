@@ -1,4 +1,4 @@
-import { sanitizeSmsText, sanitizeReplyText } from "./sanitize";
+import { sanitizeReplyText } from "./sanitize";
 import {
   getState,
   updateState,
@@ -6,78 +6,157 @@ import {
   getNextStage,
 } from "./conversationState";
 import type { ConversationState } from "./conversationState";
-import { extractSlots, detectConflict, calculateLeadScoreFromState, extractNameFallback, detectServiceCategory } from "./slotExtractor";
+import {
+  extractSlots,
+  detectConflict,
+  calculateLeadScoreFromState,
+  extractNameFallback,
+  detectServiceCategory,
+  isInformationalOnlyMessage,
+  isInstagramInquiry,
+  isTransferInquiry,
+  isParkingInquiry,
+  isLocationInquiry,
+} from "./slotExtractor";
 import type { ExtractedSlots } from "./slotExtractor";
 import { classifyIntent } from "./classifyIntent";
 import { generateSmsReply } from "./anthropic";
 import { buildOwnerAlert } from "./twilio";
 import { clinicConfig, getStartingPriceFor } from "./clinicConfig";
+import {
+  fallbackText,
+  formatStartingPriceSentence,
+  completionReply,
+  deviceBrandsReply,
+  locationReply,
+  preTreatmentReply,
+  transferReply,
+  nameUpdatedReply,
+} from "./localization";
 
-const STAGE_FALLBACK: Record<string, string> = {
-  collect_treatment_area: `Hi! Which area or treatment are you interested in?`,
-  collect_qualification:  "To guide you better, could you share a bit more about what you're looking for?",
-  collect_datetime:       "Which day and time would work best for you?",
-  collect_name:           "Could I please take your name and phone number?",
-  complete:               "Thank you. We received your appointment request. Our team will follow up shortly.",
-};
+// Cap inbound message length for the pipeline. WhatsApp allows long texts; slot
+// extraction and prompting only need the head of the message.
+const INPUT_MAX_CHARS = 500;
 
-// Pricing sentence for the static fallback path. Only speaks about price when the
-// patient asked. If the matching vertical has a clinic-configured starting price that
-// has not been shared yet, it is quoted verbatim (never rounded, converted, or swapped
-// for another vertical's price); once a past assistant reply already contains the
-// sanitized price, nothing is repeated. Without a configured price the caller's safe
-// pricing sentence is used unchanged. Wording is kept short so the qualification
-// question survives the SMS-length truncation applied by sanitizeSmsText().
-function fallbackPricingSentence(state: ConversationState, safePricingSentence: string): string {
+// Pricing sentence for the static fallback path, in the conversation language. Only
+// speaks about price when the patient asked. If the matching vertical has a
+// clinic-configured starting price that has not been shared yet, it is quoted verbatim
+// inside a natural sentence (Turkish gets the correct ablative suffix — "2.500 TL'den",
+// never "2.500den"); once a past assistant reply already contains the price, nothing is
+// repeated. Without a configured price the localized safe pricing sentence is used.
+function fallbackPricingSentence(state: ConversationState): string {
   if (!state.priceInquired) return "";
+  const lang = state.detectedLanguage;
   const price = getStartingPriceFor(state.serviceCategory);
-  if (!price) return safePricingSentence;
+  if (!price) return `${fallbackText("safePrice", lang)} `;
   const sharedForm = sanitizeReplyText(price);
   const alreadyShared =
     sharedForm.length > 0 &&
     state.history.some((h) => h.role === "assistant" && h.content.includes(sharedForm));
   if (alreadyShared) return "";
-  return `Prices start from ${price}; final cost varies by plan. `;
+  return `${formatStartingPriceSentence(price, lang)} `;
 }
 
 // Deterministic, vertical-aware qualification reply used on the static fallback path
 // (no Anthropic key, or the API failed). It mirrors the qualification question the
-// system prompt would ask, and critically NEVER requests name/phone or confirms an
-// appointment while the vertical field is still missing. Wording is kept short so the
-// question survives the SMS-length truncation applied by sanitizeSmsText().
+// system prompt would ask — in the conversation language — and critically NEVER
+// requests name/phone or confirms an appointment while the vertical field is missing.
+// Wording is kept short so composed replies survive SMS-length truncation at send time.
 function buildQualificationFallbackReply(state: ConversationState): string {
   const cat = state.serviceCategory;
+  const lang = state.detectedLanguage;
 
   if (cat === "laser") {
-    const question = "Is this your first time having this treatment?";
+    const question = fallbackText("firstTimeQuestion", lang);
     // A volunteered/requested slot is acknowledged as "we'll check availability" — never confirmed.
     if (state.availabilityInquiry || state.preferredDate || state.preferredTime) {
-      return `Noted your preferred time; our team will check availability. ${question}`;
+      return `${fallbackText("availabilityAck", lang)} ${question}`;
     }
-    return `${fallbackPricingSentence(state, "Pricing depends on a quick assessment. ")}${question}`;
+    return `${fallbackPricingSentence(state)}${question}`;
   }
   if (cat === "hair_transplant") {
-    const pricing = fallbackPricingSentence(state, "Pricing depends on a graft assessment. ");
+    const pricing = fallbackPricingSentence(state);
     if (state.estimatedGrafts !== undefined) {
-      return `${pricing}Will you be travelling to Istanbul, or already based here?`;
+      return `${pricing}${fallbackText("travelQuestion", lang)}`;
     }
-    return `${pricing}Do you know roughly how many grafts you're considering?`;
+    return `${pricing}${fallbackText("graftQuestion", lang)}`;
   }
   if (cat === "dental") {
-    const pricing = fallbackPricingSentence(state, "Pricing depends on a quick assessment. ");
-    return `${pricing}Are you considering a full smile design or a few teeth?`;
+    return `${fallbackPricingSentence(state)}${fallbackText("dentalScopeQuestion", lang)}`;
   }
-  return STAGE_FALLBACK.collect_qualification;
+  return fallbackText("qualificationClarify", lang);
 }
 
-// Chooses the static reply for a stage. The qualification stage is vertical-aware so the
-// fallback never regresses to a generic prompt (or worse, a name/phone request).
-function staticReplyFor(state: ConversationState): string {
-  if (state.stage === "collect_qualification") return buildQualificationFallbackReply(state);
-  // Completion copy is language-aware; delegate so the static path never emits the
-  // English-only STAGE_FALLBACK.complete string for a Turkish conversation.
-  if (state.stage === "complete") return buildCompleteReply(state);
-  return STAGE_FALLBACK[state.stage] ?? STAGE_FALLBACK.collect_treatment_area;
+// Static reply for an informational-only question, using ONLY clinic-configured values
+// (inserted verbatim) with the surrounding sentence in the conversation language.
+// Branch selection uses THIS message's slots (not the sticky state flags, which persist
+// from earlier turns). Order matters: channel question first, then transfer/parking
+// (more specific than the generic location patterns), then device, preparation, location.
+function buildInformationalFallbackReply(
+  input: string,
+  slots: ExtractedSlots,
+  state: ConversationState
+): string {
+  const lang = state.detectedLanguage;
+  const loc = clinicConfig.locationInfo;
+
+  if (isInstagramInquiry(input)) return fallbackText("instagramRedirect", lang);
+  if (isTransferInquiry(input)) return transferReply(loc.airportTransfer, lang);
+  if (isParkingInquiry(input)) {
+    return loc.parkingAvailable ? loc.parkingAvailable : fallbackText("locationFallback", lang);
+  }
+  if (slots.deviceInquiry) {
+    return clinicConfig.deviceBrands
+      ? deviceBrandsReply(clinicConfig.deviceBrands, lang)
+      : fallbackText("deviceFallback", lang);
+  }
+  if (slots.preTreatmentInquiry) {
+    const cat = state.serviceCategory;
+    const note =
+      cat === "laser" ? clinicConfig.preTreatmentInstructions.laser
+      : cat === "hair_transplant" ? clinicConfig.preTreatmentInstructions.hairTransplant
+      : cat === "dental" ? clinicConfig.preTreatmentInstructions.dental
+      : "";
+    return preTreatmentReply(note || undefined, lang);
+  }
+  if (isLocationInquiry(input)) {
+    return locationReply(
+      { address: loc.address, googleMapsLink: loc.googleMapsLink, nearestTransport: loc.nearestTransport },
+      lang
+    );
+  }
+  return fallbackText("postCompletionAck", lang);
+}
+
+// Chooses the static reply for a turn, in the conversation language. The qualification
+// stage is vertical-aware so the fallback never regresses to a generic prompt (or worse,
+// a name/phone request).
+function staticReplyFor(
+  state: ConversationState,
+  input: string,
+  slots: ExtractedSlots,
+  informationalOnly: boolean,
+  postCompletion: boolean
+): string {
+  if (postCompletion) {
+    if (slots.name) return nameUpdatedReply(slots.name, state.detectedLanguage);
+    return informationalOnly
+      ? buildInformationalFallbackReply(input, slots, state)
+      : fallbackText("postCompletionAck", state.detectedLanguage);
+  }
+  if (informationalOnly) return buildInformationalFallbackReply(input, slots, state);
+  switch (state.stage) {
+    case "collect_qualification":
+      return buildQualificationFallbackReply(state);
+    case "collect_datetime":
+      return fallbackText("dateTimeQuestion", state.detectedLanguage);
+    case "collect_name":
+      return fallbackText("namePhoneQuestion", state.detectedLanguage);
+    case "complete":
+      return buildCompleteReply(state);
+    default:
+      return fallbackText("treatmentAreaQuestion", state.detectedLanguage);
+  }
 }
 
 export interface InboundPipelineResult {
@@ -105,31 +184,11 @@ export interface InboundMessageOptions {
 // Completion + follow-up copy MUST match the active conversation language. The language is
 // read from state.detectedLanguage, which slot extraction keeps sticky across the final
 // (often language-neutral) name/phone turn — so a Turkish conversation stays Turkish even
-// when the closing message is just "Zeynep, +44 7700 900123".
+// when the closing message is just "Zeynep, +44 7700 900123". All seven supported
+// languages are covered by the localization dictionary.
 function buildCompleteReply(state: ConversationState): string {
   const area = state.treatmentArea || state.service;
-  if (state.detectedLanguage === "turkish") {
-    if (state.name && area) {
-      return `Teşekkür ederiz ${state.name}. ${area} için randevu talebinizi aldık. Ekibimiz kısa süre içinde sizinle iletişime geçecektir.`;
-    }
-    if (state.name) {
-      return `Teşekkür ederiz ${state.name}. Randevu talebinizi aldık. Ekibimiz kısa süre içinde sizinle iletişime geçecektir.`;
-    }
-    if (area) {
-      return `Teşekkür ederiz. ${area} için randevu talebinizi aldık. Ekibimiz kısa süre içinde sizinle iletişime geçecektir.`;
-    }
-    return "Teşekkür ederiz. Randevu talebinizi aldık. Ekibimiz kısa süre içinde sizinle iletişime geçecektir.";
-  }
-  if (state.name && area) {
-    return `Thank you, ${state.name}. We received your appointment request for ${area}. Our team will follow up shortly.`;
-  }
-  if (state.name) {
-    return `Thank you, ${state.name}. We received your appointment request. Our team will follow up shortly.`;
-  }
-  if (area) {
-    return `Thank you. We received your appointment request for ${area}. Our team will follow up shortly.`;
-  }
-  return "Thank you. We received your appointment request. Our team will follow up shortly.";
+  return completionReply(state.detectedLanguage, state.name, area);
 }
 
 export async function processInboundMessage(
@@ -137,9 +196,13 @@ export async function processInboundMessage(
 ): Promise<InboundPipelineResult> {
   const { from, body, source } = options;
 
-  const input = sanitizeSmsText(body);
+  // Unicode-preserving sanitization: Arabic/Cyrillic/accented messages must reach slot
+  // extraction and language detection intact. SMS charset/length limits apply only at
+  // SMS send time (sendSms).
+  const input = sanitizeReplyText(body).slice(0, INPUT_MAX_CHARS);
   const stateBefore = await getState(from);
   const isFirstMessage = stateBefore.history.length === 0;
+  const wasComplete = stateBefore.stage === "complete";
 
   const intentResult = classifyIntent(input, isFirstMessage);
 
@@ -157,7 +220,8 @@ export async function processInboundMessage(
   // NEVER once a name is captured: a heuristic guess must not overwrite a confirmed name
   // (e.g. "gelmedi bir şey" after "Zeynep"). Explicit corrections like "Adım Zeynep
   // değil, Ayşe" still update the name through NAME_PATTERNS above.
-  if (!extractedSlots.name && !stateBefore.name) {
+  // NEVER after completion either: post-completion follow-ups are conversation, not names.
+  if (!extractedSlots.name && !stateBefore.name && !wasComplete) {
     const noOtherSlots = Object.keys(extractedSlots).filter(k => k !== "leadScore" && k !== "detectedLanguage").length === 0;
     const needFallback =
       noOtherSlots &&
@@ -186,12 +250,18 @@ export async function processInboundMessage(
     }
   }
 
-  const conflictQuestion = detectConflict(stateBefore, extractedSlots, input);
+  // Deterministic qualification gate: purely informational questions are answered
+  // without appending a qualification question or contact request.
+  const informationalOnly = isInformationalOnlyMessage(input, extractedSlots, stateBefore);
+
+  // Conflict clarification is suppressed after completion: a follow-up mentioning a
+  // different treatment is a new inquiry, not an ambiguity about the captured lead.
+  const conflictQuestion = wasComplete ? null : detectConflict(stateBefore, extractedSlots, input);
 
   let assistantReply = "";
 
   if (conflictQuestion) {
-    assistantReply = sanitizeSmsText(conflictQuestion);
+    assistantReply = sanitizeReplyText(conflictQuestion);
   } else {
     const updates: Partial<ConversationState> = extractedSlots as Partial<ConversationState>;
     if (source) updates.source = source;
@@ -207,19 +277,30 @@ export async function processInboundMessage(
       stateUpdated = await updateState(from, { location: defaultLocation });
     }
 
-    if (stateUpdated.stage === "complete") {
-      assistantReply = sanitizeSmsText(buildCompleteReply(stateUpdated));
+    const justCompleted = stateUpdated.stage === "complete" && !wasComplete;
+    const postCompletion = stateUpdated.stage === "complete" && wasComplete;
+
+    if (justCompleted) {
+      // The completion message is sent exactly once — on the transition to complete.
+      assistantReply = sanitizeReplyText(buildCompleteReply(stateUpdated));
     } else if (process.env.ANTHROPIC_API_KEY) {
       try {
-        assistantReply = await generateSmsReply(input, stateUpdated);
+        assistantReply = await generateSmsReply(input, stateUpdated, {
+          informationalTurn: informationalOnly && !postCompletion,
+          postCompletion,
+        });
       } catch (err) {
         console.error("[Pipeline] Anthropic failed:", err instanceof Error ? err.message : err);
         console.log(`[Pipeline] using static fallback reply (stage: ${stateUpdated.stage})`);
-        assistantReply = sanitizeSmsText(staticReplyFor(stateUpdated));
+        assistantReply = sanitizeReplyText(
+          staticReplyFor(stateUpdated, input, extractedSlots, informationalOnly, postCompletion)
+        );
       }
     } else {
       console.warn("[Pipeline] ANTHROPIC_API_KEY not set — using static fallback reply");
-      assistantReply = sanitizeSmsText(staticReplyFor(stateUpdated));
+      assistantReply = sanitizeReplyText(
+        staticReplyFor(stateUpdated, input, extractedSlots, informationalOnly, postCompletion)
+      );
     }
   }
 

@@ -23,6 +23,22 @@ const CONTRACTIONS: Array<[RegExp, string]> = [
 // Turkish characters to preserve (Ç ç Ğ ğ İ ı Ö ö Ş ş Ü ü)
 const TURKISH_CHARS = "ÇçĞğİıÖöŞşÜü";
 
+// Strips Markdown constructs that WhatsApp renders as literal artifacts.
+// Must run BEFORE newline collapsing — heading/bullet markers are anchored to line starts.
+// [label](url) becomes "label: url" so links stay readable as plain text.
+function stripMarkdownArtifacts(text: string): string {
+  let s = text;
+  s = s.replace(/```[a-zA-Z]*\n?/g, " ");                 // code fences
+  s = s.replace(/`([^`]*)`/g, "$1");                       // inline code
+  s = s.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, "$1: $2");   // [Google Maps](url) → Google Maps: url
+  s = s.replace(/\*\*([^*]+)\*\*/g, "$1");                 // **bold** → bold (single *bold* is WhatsApp-native)
+  s = s.replace(/__([^_]+)__/g, "$1");                     // __bold__ → bold
+  s = s.replace(/^[ \t]*#{1,6}[ \t]+/gm, "");              // headings
+  s = s.replace(/^[ \t]*[-*•][ \t]+/gm, "");               // bullet list markers
+  s = s.replace(/^[ \t]*>[ \t]+/gm, "");                   // blockquotes
+  return s;
+}
+
 function sanitizeBase(text: string): string {
   let s = text;
 
@@ -33,22 +49,26 @@ function sanitizeBase(text: string): string {
     s = s.replace(pattern, replacement);
   }
 
-  s = s.replace(/\x27/g, "");
+  s = stripMarkdownArtifacts(s);
 
   s = s.replace(/[—–―]/g, "-");
   s = s.replace(/…/g, "...");
   s = s.replace(/[\r\n\t]+/g, " ");
 
-  // Keep printable ASCII and Turkish letters
-  s = s.replace(new RegExp(`[^\\x20-\\x7E${TURKISH_CHARS}]`, "g"), "");
+  // Remove control characters and invisible formatting chars. Printable text in ALL
+  // supported languages (Turkish, Arabic, Cyrillic, accented Latin) passes through —
+  // multilingual replies must never be blanked here. Apostrophes are preserved so
+  // Turkish suffixes stay correct ("2.500 TL'den", never "2.500den").
+  s = s.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F-\u009F\u200B-\u200F\u2028\u2029\u2060\uFEFF]/g, "");
 
   s = s.replace(/ {2,}/g, " ").trim();
 
   return s;
 }
 
-// Filters characters but does NOT truncate — use for AI replies stored in history
-// or returned to non-SMS endpoints. SMS truncation is applied only at send time.
+// Filters markdown/control characters but preserves ALL languages' letters and does NOT
+// truncate — use for AI/WhatsApp replies stored in history or returned to non-SMS
+// endpoints. SMS charset filtering and truncation are applied only at SMS send time.
 export function sanitizeReplyText(text: string): string {
   return sanitizeBase(text);
 }
@@ -63,7 +83,12 @@ export function ensureClinicNamePunctuation(text: string, clinicName: string): s
   return text.replace(re, "$1. $2");
 }
 
+// SMS transport sanitization: GSM-safe charset (ASCII + Turkish letters, emoji stripped)
+// and hard length cap. Applied at SMS send time only — WhatsApp replies keep full
+// multilingual text via sanitizeReplyText.
 export function sanitizeSmsText(text: string): string {
-  const s = sanitizeBase(text);
+  let s = sanitizeBase(text);
+  s = s.replace(new RegExp(`[^\\x20-\\x7E${TURKISH_CHARS}]`, "g"), "");
+  s = s.replace(/ {2,}/g, " ").trim();
   return s.length > SMS_MAX_CHARS ? s.slice(0, SMS_MAX_CHARS) : s;
 }

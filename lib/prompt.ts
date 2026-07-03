@@ -1,21 +1,42 @@
 import type { ConversationState, Stage } from "./conversationState";
 import { clinicConfig, getStartingPriceFor } from "./clinicConfig";
 import { sanitizeReplyText } from "./sanitize";
+import { turkishAblative } from "./localization";
 
-function buildClinicContextBlock(): string {
+// Options for turn-specific prompt behavior, decided deterministically in the pipeline.
+export interface PromptOptions {
+  // The message is a purely informational question (location, transfer, parking, device,
+  // Instagram, or out-of-flow preparation) — answer it, do NOT qualify on this turn.
+  informationalTurn?: boolean;
+  // The lead was already captured before this message — answer follow-ups without
+  // repeating the completion message or re-requesting contact details.
+  postCompletion?: boolean;
+}
+
+function buildClinicContextBlock(state: ConversationState): string {
   const parts: string[] = [];
+  const cat = state.serviceCategory;
+  const knownVertical = cat === "laser" || cat === "hair_transplant" || cat === "dental";
 
-  // Feature 4 — starting prices (only when configured; never invent)
+  // Feature 4 — starting prices (only when configured; never invent).
+  // Vertical isolation: once the patient's vertical is known, ONLY that vertical's
+  // price is exposed to the model — other verticals' prices cannot leak.
   const sp = clinicConfig.startingPrices;
   const priceLines: string[] = [];
-  if (sp.laser) priceLines.push(`laser/aesthetic starting from ${sp.laser}`);
-  if (sp.hairTransplant) priceLines.push(`hair transplant starting from ${sp.hairTransplant}`);
-  if (sp.dental) priceLines.push(`dental starting from ${sp.dental}`);
+  const priceValues: string[] = [];
+  if (sp.laser && (!knownVertical || cat === "laser")) { priceLines.push(`laser/aesthetic starting from ${sp.laser}`); priceValues.push(sp.laser); }
+  if (sp.hairTransplant && (!knownVertical || cat === "hair_transplant")) { priceLines.push(`hair transplant starting from ${sp.hairTransplant}`); priceValues.push(sp.hairTransplant); }
+  if (sp.dental && (!knownVertical || cat === "dental")) { priceLines.push(`dental starting from ${sp.dental}`); priceValues.push(sp.dental); }
   if (priceLines.length) {
+    // Turkish-suffix example is built from a price already shown above, so no other
+    // vertical's amount ever appears in the prompt.
+    const exampleTr = turkishAblative(priceValues[0]);
     parts.push(
       `Clinic-approved starting prices: ${priceLines.join("; ")}. ` +
       `When the patient asks about price for one of these verticals, share that vertical's starting price IMMEDIATELY in your reply — do not defer to a generic pricing answer first. ` +
-      `State exactly "prices start from X" using the configured amount exactly as written — do not round up, modify, convert, or invent amounts. ` +
+      `Keep the configured amount exactly as written — do not round up, modify, convert, or invent amounts. ` +
+      `Phrase it naturally in the reply language: English "Prices start from X"; Turkish "X'den başlamaktadır" with the correct apostrophe suffix (e.g. "${exampleTr} başlamaktadır") — never glue "den/dan" directly to the number. ` +
+      `If the configured value already contains starting-price wording, do not repeat it (never "başlangıç fiyatından başlamaktadır"). ` +
       `Make clear it is a starting price, not a final quote, and that the final price depends on the treatment plan (e.g. sessions, grafts, or teeth count). Then ask exactly ONE qualification question. ` +
       `Never mention a price for a vertical the patient did not ask about, and never bring up price at all if the patient has not asked.`
     );
@@ -40,19 +61,22 @@ function buildClinicContextBlock(): string {
   if (loc.airportTransfer) locParts.push(`Airport transfer: ${loc.airportTransfer}`);
   if (locParts.length) {
     parts.push(
-      `Clinic location: ${locParts.join(" | ")}. Share this when the patient asks for the address, directions, or how to get there. Do not invent details.`
+      `Clinic location: ${locParts.join(" | ")}. Share this when the patient asks for the address, directions, or how to get there. Do not invent details. ` +
+      `Write the map link as plain text ("Google Maps: <url>") — never as a Markdown link.`
     );
   }
 
-  // Feature 7 — pre-treatment instructions (only when configured)
+  // Feature 7 — pre-treatment instructions (only when configured).
+  // Vertical isolation: only the active vertical's note once the category is known.
   const pt = clinicConfig.preTreatmentInstructions;
   const ptParts: string[] = [];
-  if (pt.laser) ptParts.push(`Laser/aesthetic: ${pt.laser}`);
-  if (pt.hairTransplant) ptParts.push(`Hair transplant: ${pt.hairTransplant}`);
-  if (pt.dental) ptParts.push(`Dental: ${pt.dental}`);
+  if (pt.laser && (!knownVertical || cat === "laser")) ptParts.push(`Laser/aesthetic: ${pt.laser}`);
+  if (pt.hairTransplant && (!knownVertical || cat === "hair_transplant")) ptParts.push(`Hair transplant: ${pt.hairTransplant}`);
+  if (pt.dental && (!knownVertical || cat === "dental")) ptParts.push(`Dental: ${pt.dental}`);
   if (ptParts.length) {
     parts.push(
       `Pre-treatment preparation notes (share only when asked, keep to clinic-approved info): ${ptParts.join(" | ")}. ` +
+      `Phrase preparation info as one or two natural sentences — NEVER as a bullet list — and add that the team will confirm the exact steps before the visit. ` +
       `For clinical questions about medications or health conditions, direct to the clinic team.`
     );
   }
@@ -78,6 +102,7 @@ function startingPriceDirective(state: ConversationState): string {
   return (
     `The patient asked about price and the clinic has a configured starting price for this treatment. ` +
     `Begin the reply by stating that prices start from exactly "${price}" — a starting price, not a final quote — ` +
+    `phrased naturally in the reply language (English: "Prices start from ${price}"; Turkish: "${turkishAblative(price)} başlamaktadır") ` +
     `and that the final price depends on the exact treatment plan. Then, in the same message: `
   );
 }
@@ -92,11 +117,17 @@ const clinicDesc =
 const BASE_PROMPT = `You are a patient intake assistant for ${clinicDesc}. Your job is to qualify the patient lead and collect the information the clinic team needs to follow up.
 
 Language rule (HIGHEST PRIORITY — overrides all other instructions):
-- ALWAYS reply in the same language as the LATEST customer message.
+- Reply in the same language as the latest customer message whenever that language is clear.
 - Supported languages: Turkish, English, Arabic, German, Russian, French, Spanish.
-- Reply in whichever of those languages the latest message is written in — regardless of prior conversation language.
+- If the latest message carries no clear language signal (for example only a name and a phone number), KEEP the established conversation language (detected_language in Known information) — do not switch.
+- Use English only when there is no established conversation language and no clear signal.
 - Never say "We were discussing … earlier" or reference the previous conversation language.
-- If the language is unclear, default to Turkish.
+- Clinic-configured values — device brands, street names, addresses, prices, currency amounts, URLs, phone numbers — stay VERBATIM in every language; only the surrounding sentence is written in the reply language.
+- Never mix Turkish or English boilerplate into a reply written in another language.
+
+Formatting rule (WhatsApp plain text):
+- Never use Markdown. No [text](url) links — write "Google Maps: <url>" instead. No headings, bullet points, numbered lists, tables, or code blocks.
+- At most an occasional *bold* with single asterisks; the reply must read correctly without any formatting.
 
 Rules:
 - Keep messages short and WhatsApp-friendly. No marketing fluff.
@@ -104,7 +135,8 @@ Rules:
 - Be warm, polite, professional, and calm.
 - Use correct sentence punctuation. If you greet with "Welcome to ${clinicDesc}", always end the clinic name with a period before the next sentence: "Welcome to ${clinicDesc}. [next sentence]"
 - Never ask for information you already have.
-- If asked about pricing, never invent prices or give exact figures. The ONLY exception: a clinic-approved starting price listed in the Clinic context below — share it per that guidance. When no starting price is configured for the matching vertical, use these safe responses:
+- Ask a qualification question ONLY when the patient shows treatment or appointment intent (asking a treatment price, asking availability, wanting a treatment, giving a treatment area, asking when they can come, or planning treatment). If the patient asks a purely informational question — clinic location, directions, metro, parking, airport transfer, device brand, Instagram, general clinic info — answer it and leave the conversation open naturally. Do NOT append a qualification question, and do NOT ask for name or phone.
+- If asked about pricing, never invent prices or give exact figures. The ONLY exception: a clinic-approved starting price listed in the Clinic context below — share it per that guidance. When no starting price is configured for the matching vertical, use these safe responses (translate naturally when replying in another supported language):
   - Laser/aesthetic — Turkish: "Fiyat bilgisi işlem bölgesine ve seans sayısına göre değişebilir. Ekibimiz sizinle iletişime geçip net bilgi paylaşacaktır."
   - Laser/aesthetic — English: "Pricing depends on the treatment area and number of sessions. Our team will share exact details when they follow up."
   - Hair transplant — Turkish: "Fiyat bilgisi greft sayısı ve tedavi planına göre değişebilir. Ekibimiz net bilgi için sizinle iletişime geçecektir."
@@ -134,6 +166,20 @@ const NEXT_FIELD_PROMPT: Record<Stage, string> = {
     "All required information has been collected. Write a confirmation message. Never say 'your appointment is confirmed' or 'we will come'. Use 'appointment request' language only.",
 };
 
+// Directive for a purely informational turn: answer, do not qualify, leave open.
+const INFORMATIONAL_TASK =
+  "The patient's latest message is a purely informational question (location, directions, transfer, parking, devices, Instagram, or preparation). " +
+  "Answer it using ONLY the Clinic context above (or the matching fallback rule). " +
+  "Do NOT ask a qualification question, do NOT ask whether it is their first time, and do NOT ask for their name, phone, or preferred time in this reply. " +
+  "End naturally and leave the conversation open.";
+
+// Directive for messages that arrive AFTER the lead is already complete.
+const POST_COMPLETION_TASK =
+  "This lead is already captured — the appointment request and contact details are recorded. " +
+  "Answer the patient's latest message naturally in the conversation language. " +
+  "Do NOT repeat the completion/confirmation message, do NOT send or mention any booking link again, and do NOT ask again for their name or phone. " +
+  "If they ask a new question, answer it using the Clinic context; if they mention a new treatment, note it and say the team will follow up.";
+
 function buildQualificationTask(state: ConversationState): string {
   const cat = state.serviceCategory;
   if (cat === "laser") {
@@ -157,7 +203,7 @@ function buildQualificationTask(state: ConversationState): string {
   return "Ask one clarifying question to better understand what the patient is looking for.";
 }
 
-export function buildSystemPrompt(state: ConversationState): string {
+export function buildSystemPrompt(state: ConversationState, options?: PromptOptions): string {
   const known: string[] = [];
   if (state.name) known.push(`name=${state.name}`);
   if (state.phone) known.push(`phone=${state.phone}`);
@@ -203,14 +249,24 @@ export function buildSystemPrompt(state: ConversationState): string {
   const guardSection =
     guards.length > 0 ? `\nDO NOT ASK AGAIN: ${guards.join(" ")}` : "";
 
-  const nextTask =
-    state.stage === "collect_qualification"
-      ? buildQualificationTask(state)
-      : NEXT_FIELD_PROMPT[state.stage];
+  // Turn-specific task. Informational and post-completion turns are decided
+  // deterministically in the pipeline — the model handles wording, not flow control.
+  let nextTask: string;
+  if (options?.postCompletion) {
+    nextTask = POST_COMPLETION_TASK;
+  } else if (options?.informationalTurn) {
+    nextTask = INFORMATIONAL_TASK;
+  } else if (state.stage === "collect_qualification") {
+    nextTask = buildQualificationTask(state);
+  } else {
+    nextTask = NEXT_FIELD_PROMPT[state.stage];
+  }
+
+  const priceDirective = options?.informationalTurn || options?.postCompletion ? "" : startingPriceDirective(state);
 
   // Context block is built per call (not at module load) so clinic config reads stay
   // current and the block is testable without re-importing the module.
-  return `${BASE_PROMPT}${buildClinicContextBlock()}${knownSection}${guardSection}\nNext step: ${startingPriceDirective(state)}${nextTask}`;
+  return `${BASE_PROMPT}${buildClinicContextBlock(state)}${knownSection}${guardSection}\nNext step: ${priceDirective}${nextTask}`;
 }
 
 // Legacy export — keeps any remaining static import from breaking

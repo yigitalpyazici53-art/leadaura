@@ -38,7 +38,7 @@ if (fs.existsSync(envFile)) {
 // ── Now safe to import lib modules (client is lazy-initialized) ──────────
 import { generateSmsReply, getAnthropicModel, DEFAULT_MODEL } from "../lib/anthropic";
 import { buildOwnerAlert, notifyOwner } from "../lib/twilio";
-import { sanitizeSmsText, SMS_MAX_CHARS, ensureClinicNamePunctuation } from "../lib/sanitize";
+import { sanitizeSmsText, sanitizeReplyText, SMS_MAX_CHARS, ensureClinicNamePunctuation } from "../lib/sanitize";
 import {
   getState,
   updateState,
@@ -48,11 +48,19 @@ import {
   _setStateForTest,
   type ConversationState,
 } from "../lib/conversationState";
-import { extractSlots, detectConflict, calculateLeadScoreFromState, normalizeTreatmentArea, detectMessageLanguage, detectMessageLanguageConfident, extractNameFallback } from "../lib/slotExtractor";
+import { extractSlots, detectConflict, calculateLeadScoreFromState, normalizeTreatmentArea, detectMessageLanguage, detectMessageLanguageConfident, extractNameFallback, isInformationalOnlyMessage } from "../lib/slotExtractor";
 import { processInboundMessage } from "../lib/inboundPipeline";
 import { classifyIntent } from "../lib/classifyIntent";
 import { buildSystemPrompt } from "../lib/prompt";
-import { clinicConfig } from "../lib/clinicConfig";
+import { clinicConfig, formatBookingLinkMessage } from "../lib/clinicConfig";
+import {
+  SUPPORTED_LANGUAGES,
+  fallbackText,
+  formatStartingPriceSentence,
+  turkishAblative,
+  completionReply,
+  type FallbackKind,
+} from "../lib/localization";
 
 const TEST_FROM = "+905000000000";
 
@@ -857,16 +865,27 @@ async function testNameOverwriteProtection(): Promise<void> {
   const r2a = await processInboundMessage({ from: phone2, body: "Zeynep, +44 7700 900123" });
   assertEqual("stage=complete after name+phone", r2a.stateAfter.stage, "complete");
   assertEqual("name captured as Zeynep", r2a.stateAfter.name, "Zeynep");
+  assertContains("completion reply addresses Zeynep once", r2a.assistantReply, "Zeynep");
+
+  // Post-completion turns are deterministic on the static path — force it so the test
+  // is stable with or without an API key configured.
+  const savedKeyPost = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
 
   const r2b = await processInboundMessage({ from: phone2, body: "gelmedi bir şey" });
   assertEqual("name still Zeynep after post-completion status message", r2b.stateAfter.name, "Zeynep");
-  assertContains("completion reply still addresses Zeynep", r2b.assistantReply, "Zeynep");
-  assertNotContains("completion reply never says 'Gelmedi'", r2b.assistantReply, "Gelmedi");
+  assertNotContains("post-completion reply never says 'Gelmedi'", r2b.assistantReply, "Gelmedi");
+  // Completed-state behavior: the full completion message is NOT repeated on follow-ups.
+  assertNotContains("post-completion reply does not repeat completion message", r2b.assistantReply, "randevu talebinizi aldık");
+  assertNotContains("post-completion reply does not repeat completion message (EN)", r2b.assistantReply, "We received your appointment request");
+  assertContains("post-completion reply is the short team ack", r2b.assistantReply, "Ekibimiz");
 
   // -- Pipeline: explicit Turkish correction still updates a captured name
   const r2c = await processInboundMessage({ from: phone2, body: "Adım Zeynep değil, Ayşe." });
   assertEqual("TR correction updates name to Ayşe", r2c.stateAfter.name, "Ayşe");
   assertContains("reply addresses corrected name Ayşe", r2c.assistantReply, "Ayşe");
+
+  if (savedKeyPost !== undefined) process.env.ANTHROPIC_API_KEY = savedKeyPost;
 
   // -- Pipeline: explicit English correction still updates a captured name
   const phone3 = "+905000000092";
@@ -886,7 +905,10 @@ async function testNameOverwriteProtection(): Promise<void> {
     ],
     lastUpdated: Date.now(),
   });
+  const savedKeyPost3 = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
   const r3 = await processInboundMessage({ from: phone3, body: "My name is Sarah, not Zeynep." });
+  if (savedKeyPost3 !== undefined) process.env.ANTHROPIC_API_KEY = savedKeyPost3;
   assertEqual("EN correction updates name to Sarah", r3.stateAfter.name, "Sarah");
   assertContains("reply addresses corrected name Sarah", r3.assistantReply, "Sarah");
 }
@@ -2002,7 +2024,10 @@ async function testConfiguredStartingPrices(): Promise<void> {
     await resetState(PHONE_TR);
     const tr = await processInboundMessage({ from: PHONE_TR, body: "Merhaba, full body lazer fiyatı ne kadar?" });
     assertContains("fallback TR laser: exact configured price", tr.assistantReply, "2.500 TL");
-    assertContains("fallback TR laser: asks first-time question", tr.assistantReply, "first time");
+    assertContains("fallback TR laser: natural Turkish suffix (TL'den)", tr.assistantReply, "2.500 TL'den");
+    assertContains("fallback TR laser: natural Turkish wording", tr.assistantReply, "başlamaktadır");
+    assertNotContains("fallback TR laser: no glued suffix '2.500den'", tr.assistantReply, "2.500den");
+    assertContains("fallback TR laser: asks first-time question in Turkish", tr.assistantReply, "ilk kez");
     assertNotContains("fallback TR laser: no HT price leak", tr.assistantReply, "40.000 TL");
     assertNotContains("fallback TR laser: no dental price leak", tr.assistantReply, "10.000 TL");
     assertEqual("fallback TR laser: stage = collect_qualification (unchanged)", tr.stateAfter.stage, "collect_qualification");
@@ -2014,6 +2039,7 @@ async function testConfiguredStartingPrices(): Promise<void> {
     await resetState(PHONE_EN);
     const en = await processInboundMessage({ from: PHONE_EN, body: "Hi, how much is full body laser hair removal?" });
     assertContains("fallback EN laser: exact configured price", en.assistantReply, "2.500 TL");
+    assertContains("fallback EN laser: natural 'starts from' wording", en.assistantReply, "starts from 2.500 TL");
     assertContains("fallback EN laser: asks first-time question", en.assistantReply, "first time");
     assertSms("fallback EN laser: SMS-safe", en.assistantReply);
 
@@ -2022,7 +2048,7 @@ async function testConfiguredStartingPrices(): Promise<void> {
     await resetState(PHONE_HT);
     const ht1 = await processInboundMessage({ from: PHONE_HT, body: "Merhaba saç ekimi fiyatı ne kadar?" });
     assertContains("fallback HT: exact configured price", ht1.assistantReply, "40.000 TL");
-    assertContains("fallback HT: asks graft question", ht1.assistantReply, "grafts");
+    assertContains("fallback HT: asks graft question in Turkish", ht1.assistantReply, "greft");
     assertNotContains("fallback HT: no laser price leak", ht1.assistantReply, "2.500 TL");
     assertSms("fallback HT: SMS-safe", ht1.assistantReply);
 
@@ -2046,17 +2072,17 @@ async function testConfiguredStartingPrices(): Promise<void> {
     await resetState(PHONE_NOASK);
     const noAsk = await processInboundMessage({ from: PHONE_NOASK, body: "Merhaba, full body lazer için randevu almak istiyorum" });
     assertNotContains("fallback no-ask: price not mentioned proactively", noAsk.assistantReply, "2.500 TL");
-    assertContains("fallback no-ask: still asks first-time question", noAsk.assistantReply, "first time");
+    assertContains("fallback no-ask: still asks first-time question in Turkish", noAsk.assistantReply, "ilk kez");
 
     // 6. Empty config for the matching vertical → safe pricing fallback preserved
     clinicConfig.startingPrices.laser = "";
     const PHONE_EMPTY = "+905000001086";
     await resetState(PHONE_EMPTY);
     const empty = await processInboundMessage({ from: PHONE_EMPTY, body: "Merhaba, full body lazer fiyatı ne kadar?" });
-    assertContains("fallback empty laser config: safe pricing response", empty.assistantReply, "Pricing depends on a quick assessment");
+    assertContains("fallback empty laser config: Turkish safe pricing response", empty.assistantReply, "Fiyat bilgisi");
     assertNotContains("fallback empty laser config: no stale price", empty.assistantReply, "2.500 TL");
     assertNotContains("fallback empty laser config: no other vertical price", empty.assistantReply, "40.000 TL");
-    assertContains("fallback empty laser config: asks first-time question", empty.assistantReply, "first time");
+    assertContains("fallback empty laser config: asks first-time question in Turkish", empty.assistantReply, "ilk kez");
 
     // Prompt side of the empty case: no laser price line or directive; safe scripts remain
     const emptyPrompt = buildSystemPrompt(laserState);
@@ -2067,6 +2093,437 @@ async function testConfiguredStartingPrices(): Promise<void> {
     clinicConfig.startingPrices.laser = savedPrices.laser;
     clinicConfig.startingPrices.hairTransplant = savedPrices.hairTransplant;
     clinicConfig.startingPrices.dental = savedPrices.dental;
+    if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
+  }
+}
+
+// ── Hardening: natural price formatting + WhatsApp-safe output ────────────
+
+function testPriceAndWhatsAppFormatting(): void {
+  header("Hardening: natural price formatting + WhatsApp-safe output");
+
+  // Turkish ablative suffix — pronunciation-based, never blindly glued
+  assertEqual("TL ablative", turkishAblative("2.500 TL"), "2.500 TL'den");
+  assertEqual("40.000 TL ablative", turkishAblative("40.000 TL"), "40.000 TL'den");
+  assertEqual("EUR ablative", turkishAblative("300 EUR"), "300 EUR'dan");
+  assertEqual("bare 40 ablative (kırktan)", turkishAblative("40"), "40'tan");
+  assertEqual("bare 1.250 ablative (elliden)", turkishAblative("1.250"), "1.250'den");
+
+  const trSentence = formatStartingPriceSentence("2.500 TL", "turkish");
+  assertContains("TR price sentence uses TL'den", trSentence, "2.500 TL'den");
+  assertContains("TR price sentence uses başlamaktadır", trSentence, "başlamaktadır");
+  assertNotContains("TR price sentence never glues suffix (2.500den)", trSentence, "2.500den");
+
+  const enSentence = formatStartingPriceSentence("2.500 TL", "english");
+  assertContains("EN price sentence uses natural 'starts from'", enSentence, "starts from 2.500 TL");
+
+  // Double-wording guard: config value already contains starting-price words
+  const worded = formatStartingPriceSentence("2.500 TL demo başlangıç fiyatı", "turkish");
+  assertNotContains("pre-worded config: no doubled 'başlamaktadır'", worded, "başlamaktadır");
+  assertContains("pre-worded config value stays verbatim", worded, "2.500 TL demo başlangıç fiyatı");
+
+  // Price value stays verbatim in ALL seven languages
+  for (const lang of SUPPORTED_LANGUAGES) {
+    assertContains(`price verbatim in ${lang} sentence`, formatStartingPriceSentence("2.500 TL", lang), "2.500 TL");
+  }
+
+  // WhatsApp-safe: Markdown links become "label: url" plain text
+  const md = sanitizeReplyText("Konum: [Google Maps](https://maps.app.goo.gl/demo123)");
+  assertContains("markdown link becomes 'Google Maps: url'", md, "Google Maps: https://maps.app.goo.gl/demo123");
+  assertNotContains("no '](' artifact", md, "](");
+  assertNotContains("no '[' artifact", md, "[Google");
+
+  // Headings, bullets, bold, code markers are removed; text is preserved
+  const artifacts = sanitizeReplyText("# Hazırlık\n- deodorant kullanmayın\n- krem sürmeyin\n**Önemli** `not`");
+  assertNotContains("no bullet marker", artifacts, "- deodorant");
+  assertNotContains("no heading marker", artifacts, "#");
+  assertNotContains("no bold marker", artifacts, "**");
+  assertNotContains("no backtick", artifacts, "`");
+  assertContains("bullet text preserved", artifacts, "deodorant kullanmayın");
+
+  // Apostrophes and every supported script survive WhatsApp reply sanitization
+  assertEqual(
+    "apostrophe preserved in reply text",
+    sanitizeReplyText("Fiyatlar 2.500 TL'den başlamaktadır."),
+    "Fiyatlar 2.500 TL'den başlamaktadır."
+  );
+  assertContains("Cyrillic preserved", sanitizeReplyText("Спасибо, мы получили вашу заявку."), "Спасибо");
+  assertContains("Arabic preserved", sanitizeReplyText("شكرًا لكم. استلمنا طلب موعدكم."), "شكرًا");
+  assertContains("German umlaut preserved", sanitizeReplyText("Die Preise hängen vom Plan ab."), "hängen");
+  assertContains("Spanish inverted mark preserved", sanitizeReplyText("¿Qué día le viene bien?"), "¿Qué");
+
+  // SMS transport path still enforces GSM-ish charset + truncation
+  const sms = sanitizeSmsText("Merhaba 💅 " + "x".repeat(200));
+  assertNotContains("SMS path strips emoji", sms, "💅");
+  assertEqual("SMS path truncates at limit", sms.length <= SMS_MAX_CHARS, true);
+}
+
+// ── Hardening: context-aware qualification gating ─────────────────────────
+
+async function testQualificationIntentGating(): Promise<void> {
+  header("Hardening: informational questions answered without qualification");
+
+  const savedKey = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  const savedBrands = clinicConfig.deviceBrands;
+  const savedLoc = { ...clinicConfig.locationInfo };
+  const savedPre = { ...clinicConfig.preTreatmentInstructions };
+
+  try {
+    clinicConfig.deviceBrands = "Candela GentleMax Pro, Soprano Ice";
+    clinicConfig.locationInfo.address = "Nisantasi Ornek Sk. No:12, Sisli, Istanbul";
+    clinicConfig.locationInfo.googleMapsLink = "https://maps.app.goo.gl/demo123";
+    clinicConfig.locationInfo.nearestTransport = "Osmanbey metro (5 dk)";
+    clinicConfig.locationInfo.airportTransfer = "IST havalimanindan VIP transfer imkani mevcuttur.";
+    clinicConfig.preTreatmentInstructions.laser =
+      "İşlem günü bölgenin temiz olması ve deodorant, krem, parfüm veya yağ sürülmemesi önerilir.";
+
+    const noQualification = (label: string, reply: string) => {
+      assertNotContains(`${label}: no first-time question (TR)`, reply, "ilk kez");
+      assertNotContains(`${label}: no first-time question (EN)`, reply, "first time");
+      assertNotContains(`${label}: no name request (TR)`, reply, "isminizi");
+      assertNotContains(`${label}: no phone request (TR)`, reply, "telefon numaranızı");
+      assertNotContains(`${label}: no name request (EN)`, reply, "your name");
+      assertNotContains(`${label}: no phone request (EN)`, reply, "phone number");
+    };
+
+    // 7. Device inquiry (real-world Turkish phrasing) → answer only
+    const PH_DEV = "+905000002001";
+    await resetState(PH_DEV);
+    const dev = await processInboundMessage({ from: PH_DEV, body: "Hangi lazer cihazını kullanıyorsunuz?" });
+    assertContains("device: configured brands verbatim", dev.assistantReply, "Candela GentleMax Pro, Soprano Ice");
+    noQualification("device", dev.assistantReply);
+
+    // 8. Location inquiry → address + plain "Google Maps: <url>", no qualification
+    const PH_LOC = "+905000002002";
+    await resetState(PH_LOC);
+    const loc = await processInboundMessage({ from: PH_LOC, body: "Adresiniz nerede acaba?" });
+    assertContains("location: address verbatim", loc.assistantReply, "Nisantasi Ornek Sk. No:12");
+    assertContains("location: plain Google Maps link", loc.assistantReply, "Google Maps: https://maps.app.goo.gl/demo123");
+    assertNotContains("location: no markdown link", loc.assistantReply, "](");
+    noQualification("location", loc.assistantReply);
+
+    // 9. Airport transfer inquiry → configured note verbatim, no qualification
+    const PH_TRF = "+905000002003";
+    await resetState(PH_TRF);
+    const trf = await processInboundMessage({ from: PH_TRF, body: "Havalimanından transfer hizmetiniz var mı?" });
+    assertContains("transfer: configured note verbatim", trf.assistantReply, "IST havalimanindan VIP transfer imkani mevcuttur.");
+    noQualification("transfer", trf.assistantReply);
+
+    // 10. Instagram channel inquiry → WhatsApp redirect, no qualification
+    const PH_IG = "+905000002004";
+    await resetState(PH_IG);
+    const ig = await processInboundMessage({ from: PH_IG, body: "Size Instagram'dan da yazabilir miyim?" });
+    assertContains("instagram: redirects to WhatsApp", ig.assistantReply, "WhatsApp");
+    noQualification("instagram", ig.assistantReply);
+
+    // Pre-treatment inquiry OUTSIDE an active flow → natural sentences, no forcing
+    const PH_PRE = "+905000002005";
+    await resetState(PH_PRE);
+    const pre = await processInboundMessage({ from: PH_PRE, body: "Lazer öncesi nasıl hazırlanmalıyım?" });
+    assertContains("pre-treatment: configured note verbatim", pre.assistantReply, "deodorant, krem, parfüm veya yağ sürülmemesi önerilir");
+    assertContains("pre-treatment: team-will-confirm closer", pre.assistantReply, "ziyaretinizden önce");
+    assertNotContains("pre-treatment: no bullet artifacts", pre.assistantReply, "- ");
+    noQualification("pre-treatment", pre.assistantReply);
+
+    // Pre-treatment inquiry INSIDE an active flow → flow continues with the missing field
+    const PH_MID = "+905000002006";
+    await resetState(PH_MID);
+    await _setStateForTest(PH_MID, {
+      stage: "collect_qualification",
+      service: "lazer epilasyon",
+      treatmentArea: "full body",
+      serviceCategory: "laser",
+      detectedLanguage: "turkish",
+      history: [
+        { role: "user", content: "Merhaba, full body lazer istiyorum." },
+        { role: "assistant", content: "Bu işlemi ilk kez mi yaptıracaksınız?" },
+      ],
+      lastUpdated: Date.now(),
+    });
+    const mid = await processInboundMessage({ from: PH_MID, body: "İşlem öncesi nasıl hazırlanmalıyım?" });
+    assertContains("mid-flow pre-treatment: qualification continues", mid.assistantReply, "ilk kez");
+
+    // 5+12. Price inquiry still qualifies
+    const PH_PRICE = "+905000002007";
+    await resetState(PH_PRICE);
+    const price = await processInboundMessage({ from: PH_PRICE, body: "Full body lazer fiyatı ne kadar?" });
+    assertContains("price intent: asks first-time question", price.assistantReply, "ilk kez");
+    assertEqual("price intent: stage = collect_qualification", price.stateAfter.stage, "collect_qualification");
+
+    // 6. Availability inquiry still qualifies (with availability acknowledgment)
+    const PH_AV = "+905000002008";
+    await resetState(PH_AV);
+    const av = await processInboundMessage({ from: PH_AV, body: "Cumartesi öğleden sonra müsait misiniz? Full body lazer için." });
+    assertContains("availability intent: team-will-check ack", av.assistantReply, "uygunluğu kontrol");
+    assertContains("availability intent: asks first-time question", av.assistantReply, "ilk kez");
+
+    // 12b. Explicit treatment wish still qualifies
+    const PH_INT = "+905000002009";
+    await resetState(PH_INT);
+    const intent = await processInboundMessage({ from: PH_INT, body: "Bacak lazer yaptırmak istiyorum." });
+    assertEqual("treatment wish: stage = collect_qualification", intent.stateAfter.stage, "collect_qualification");
+    assertContains("treatment wish: asks first-time question", intent.assistantReply, "ilk kez");
+
+    // Unit: the deterministic gate itself
+    const freshState = { stage: "collect_treatment_area" as const, history: [], lastUpdated: Date.now() };
+    assertEqual(
+      "gate: device question is informational-only",
+      isInformationalOnlyMessage("Hangi lazer cihazını kullanıyorsunuz?", extractSlots("Hangi lazer cihazını kullanıyorsunuz?"), freshState),
+      true
+    );
+    assertEqual(
+      "gate: price question is NOT informational-only",
+      isInformationalOnlyMessage("Full body lazer fiyatı ne kadar?", extractSlots("Full body lazer fiyatı ne kadar?"), freshState),
+      false
+    );
+  } finally {
+    clinicConfig.deviceBrands = savedBrands;
+    clinicConfig.locationInfo.address = savedLoc.address;
+    clinicConfig.locationInfo.googleMapsLink = savedLoc.googleMapsLink;
+    clinicConfig.locationInfo.nearestTransport = savedLoc.nearestTransport;
+    clinicConfig.locationInfo.airportTransfer = savedLoc.airportTransfer;
+    clinicConfig.preTreatmentInstructions.laser = savedPre.laser;
+    if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
+  }
+}
+
+// ── Hardening: static fallbacks in all seven languages ────────────────────
+
+async function testMultilingualStaticFallbacks(): Promise<void> {
+  header("Hardening: multilingual static fallbacks (7 languages)");
+
+  // 17. Dictionary completeness — every fallback kind exists in every language
+  const kinds: FallbackKind[] = [
+    "safePrice", "firstTimeQuestion", "graftQuestion", "travelQuestion",
+    "dentalScopeQuestion", "qualificationClarify", "treatmentAreaQuestion",
+    "dateTimeQuestion", "namePhoneQuestion", "availabilityAck", "locationFallback",
+    "deviceFallback", "preTreatmentFallback", "transferFallback",
+    "instagramRedirect", "postCompletionAck",
+  ];
+  let missing = 0;
+  for (const kind of kinds) {
+    for (const lang of SUPPORTED_LANGUAGES) {
+      if (!fallbackText(kind, lang) || fallbackText(kind, lang).trim().length === 0) {
+        fail(`fallback ${kind}/${lang} exists`, "empty string");
+        missing++;
+      }
+    }
+  }
+  if (missing === 0) pass(`all ${kinds.length} fallback kinds exist in all ${SUPPORTED_LANGUAGES.length} languages`);
+
+  // Completion reply + booking link in every language, values verbatim
+  const LINK = "https://clinic.example/book/abc";
+  for (const lang of SUPPORTED_LANGUAGES) {
+    const c = completionReply(lang, "Sara", "full body");
+    assertContains(`completion(${lang}) keeps name verbatim`, c, "Sara");
+    assertContains(`completion(${lang}) keeps area verbatim`, c, "full body");
+    assertContains(`booking link (${lang}) keeps URL verbatim`, formatBookingLinkMessage(LINK, lang), LINK);
+  }
+
+  // Pipeline: mid-flow price fallbacks in German, French, Spanish, Russian, Arabic
+  const savedKey = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  const savedPrice = clinicConfig.startingPrices.laser;
+  try {
+    clinicConfig.startingPrices.laser = "2.500 TL";
+
+    const cases: Array<{ lang: string; body: string; expect: string[] }> = [
+      { lang: "german",  body: "Hallo, wie viel kostet eine Laser-Haarentfernung?", expect: ["beginnen ab 2.500 TL", "Behandlung"] },
+      { lang: "french",  body: "Bonjour, combien coûte l'épilation au laser ?",      expect: ["partir de 2.500 TL", "première fois"] },
+      { lang: "spanish", body: "Hola, ¿cuánto cuesta la depilación láser?",          expect: ["desde 2.500 TL", "primera vez"] },
+      { lang: "russian", body: "Здравствуйте, сколько стоит лазерная эпиляция?",     expect: ["от 2.500 TL", "впервые"] },
+      { lang: "arabic",  body: "مرحبا، كم سعر إزالة الشعر بالليزر؟",                  expect: ["2.500 TL", "أول مرة"] },
+    ];
+    let phoneSeq = 2101;
+    for (const c of cases) {
+      const phone = `+90500000${phoneSeq++}`;
+      await resetState(phone);
+      const r = await processInboundMessage({ from: phone, body: c.body });
+      assertEqual(`${c.lang}: detectedLanguage`, r.stateAfter.detectedLanguage, c.lang);
+      for (const needle of c.expect) {
+        assertContains(`${c.lang}: fallback reply has "${needle}"`, r.assistantReply, needle);
+      }
+      assertNotContains(`${c.lang}: no Turkish boilerplate`, r.assistantReply, "Fiyat bilgisi");
+      assertNotContains(`${c.lang}: no English boilerplate`, r.assistantReply, "Pricing depends");
+    }
+
+    // 15. Neutral final turn (name + phone only) preserves the established language
+    const PH_DE = "+905000002110";
+    await resetState(PH_DE);
+    await _setStateForTest(PH_DE, {
+      stage: "collect_name",
+      service: "laser hair removal",
+      treatmentArea: "full body",
+      serviceCategory: "laser",
+      firstTimeLaser: true,
+      preferredDate: "saturday",
+      detectedLanguage: "german",
+      history: [
+        { role: "user", content: "Hallo, ich möchte eine Laser-Haarentfernung." },
+        { role: "assistant", content: "Dürfte ich Ihren Namen und Ihre Telefonnummer notieren?" },
+      ],
+      lastUpdated: Date.now(),
+    });
+    const de = await processInboundMessage({ from: PH_DE, body: "Anna, +49 151 23456789" });
+    assertEqual("DE neutral turn: stage complete", de.stateAfter.stage, "complete");
+    assertEqual("DE neutral turn: language stays german", de.stateAfter.detectedLanguage, "german");
+    assertContains("DE completion is German", de.assistantReply, "Vielen Dank Anna");
+    assertContains("DE completion uses Terminanfrage", de.assistantReply, "Terminanfrage");
+    assertNotContains("DE completion not English", de.assistantReply, "Thank you");
+    assertContains("DE booking link is German", formatBookingLinkMessage(LINK, de.stateAfter.detectedLanguage), "Terminanfrage");
+  } finally {
+    clinicConfig.startingPrices.laser = savedPrice;
+    if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
+  }
+}
+
+// ── Hardening: vertical isolation (prices + preparation) ──────────────────
+
+async function testVerticalIsolationHardening(): Promise<void> {
+  header("Hardening: vertical isolation — laser / hair transplant / dental");
+
+  const savedPrices = { ...clinicConfig.startingPrices };
+  const savedPre = { ...clinicConfig.preTreatmentInstructions };
+  const savedKey = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  try {
+    clinicConfig.startingPrices.laser = "2.500 TL";
+    clinicConfig.startingPrices.hairTransplant = "40.000 TL";
+    clinicConfig.startingPrices.dental = "10.000 TL";
+    clinicConfig.preTreatmentInstructions.laser = "LAZER-HAZIRLIK: bölgenin temiz olması önerilir.";
+    clinicConfig.preTreatmentInstructions.hairTransplant = "SACEKIMI-HAZIRLIK: rahat kıyafet önerilir.";
+    clinicConfig.preTreatmentInstructions.dental = "DENTAL-HAZIRLIK: diş temizliği önerilir.";
+
+    const mkState = (cat: ConversationState["serviceCategory"], service: string): ConversationState => ({
+      stage: "collect_qualification",
+      service,
+      serviceCategory: cat,
+      priceInquired: true,
+      history: [],
+      lastUpdated: Date.now(),
+    });
+
+    // 18. Laser prompt: only laser config
+    const laserPrompt = buildSystemPrompt(mkState("laser", "lazer epilasyon"));
+    assertContains("laser prompt: own price", laserPrompt, "2.500 TL");
+    assertNotContains("laser prompt: no HT price", laserPrompt, "40.000 TL");
+    assertNotContains("laser prompt: no dental price", laserPrompt, "10.000 TL");
+    assertContains("laser prompt: own preparation note", laserPrompt, "LAZER-HAZIRLIK");
+    assertNotContains("laser prompt: no HT preparation", laserPrompt, "SACEKIMI-HAZIRLIK");
+    assertNotContains("laser prompt: no dental preparation", laserPrompt, "DENTAL-HAZIRLIK");
+
+    // 19. Hair transplant prompt: only HT config
+    const htPrompt = buildSystemPrompt(mkState("hair_transplant", "saç ekimi"));
+    assertContains("HT prompt: own price", htPrompt, "40.000 TL");
+    assertNotContains("HT prompt: no laser price", htPrompt, "2.500 TL");
+    assertNotContains("HT prompt: no dental price", htPrompt, "10.000 TL");
+    assertContains("HT prompt: own preparation note", htPrompt, "SACEKIMI-HAZIRLIK");
+    assertNotContains("HT prompt: no laser preparation", htPrompt, "LAZER-HAZIRLIK");
+
+    // 20. Dental prompt: only dental config
+    const dnPrompt = buildSystemPrompt(mkState("dental", "veneer"));
+    assertContains("dental prompt: own price", dnPrompt, "10.000 TL");
+    assertNotContains("dental prompt: no laser price", dnPrompt, "2.500 TL");
+    assertNotContains("dental prompt: no HT price", dnPrompt, "40.000 TL");
+    assertContains("dental prompt: own preparation note", dnPrompt, "DENTAL-HAZIRLIK");
+    assertNotContains("dental prompt: no laser preparation", dnPrompt, "LAZER-HAZIRLIK");
+
+    // Unknown category: all verticals stay visible (labeled) — backward compatible
+    const genericPrompt = buildSystemPrompt({ stage: "collect_treatment_area", history: [], lastUpdated: Date.now() });
+    assertContains("generic prompt: laser price visible", genericPrompt, "2.500 TL");
+    assertContains("generic prompt: HT price visible", genericPrompt, "40.000 TL");
+    assertContains("generic prompt: dental price visible", genericPrompt, "10.000 TL");
+
+    // 21. Static pre-treatment reply uses only the active vertical's note
+    const PH_ISO = "+905000002201";
+    await resetState(PH_ISO);
+    const iso = await processInboundMessage({ from: PH_ISO, body: "What should I do before my laser session?" });
+    assertContains("static prep: laser note only", iso.assistantReply, "LAZER-HAZIRLIK");
+    assertNotContains("static prep: no HT leakage", iso.assistantReply, "SACEKIMI-HAZIRLIK");
+    assertNotContains("static prep: no dental leakage", iso.assistantReply, "DENTAL-HAZIRLIK");
+  } finally {
+    clinicConfig.startingPrices.laser = savedPrices.laser;
+    clinicConfig.startingPrices.hairTransplant = savedPrices.hairTransplant;
+    clinicConfig.startingPrices.dental = savedPrices.dental;
+    clinicConfig.preTreatmentInstructions.laser = savedPre.laser;
+    clinicConfig.preTreatmentInstructions.hairTransplant = savedPre.hairTransplant;
+    clinicConfig.preTreatmentInstructions.dental = savedPre.dental;
+    if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
+  }
+}
+
+// ── Hardening: completed-conversation behavior ────────────────────────────
+
+async function testCompletedStateBehavior(): Promise<void> {
+  header("Hardening: completed-conversation behavior");
+
+  const savedKey = process.env.ANTHROPIC_API_KEY;
+  delete process.env.ANTHROPIC_API_KEY;
+  const savedLoc = { ...clinicConfig.locationInfo };
+  try {
+    clinicConfig.locationInfo.address = "Nisantasi Ornek Sk. No:12, Sisli, Istanbul";
+    clinicConfig.locationInfo.googleMapsLink = "https://maps.app.goo.gl/demo123";
+
+    const PH = "+905000002301";
+    await resetState(PH);
+    await _setStateForTest(PH, {
+      stage: "collect_name",
+      service: "lazer epilasyon",
+      treatmentArea: "full body",
+      serviceCategory: "laser",
+      firstTimeLaser: true,
+      preferredDate: "cumartesi",
+      preferredTime: "öğleden sonra",
+      detectedLanguage: "turkish",
+      history: [
+        { role: "user", content: "Merhaba, full body lazer için cumartesi uygun musunuz?" },
+        { role: "assistant", content: "İsminizi ve telefon numaranızı alabilir miyim?" },
+      ],
+      lastUpdated: Date.now(),
+    });
+
+    // 22a. Completion message is sent exactly once — on the completing turn
+    const done = await processInboundMessage({ from: PH, body: "Zeynep, +44 7700 900123" });
+    assertEqual("completion: stage complete", done.stateAfter.stage, "complete");
+    assertContains("completion: full message on transition", done.assistantReply, "randevu talebinizi aldık");
+    assertContains("completion: addresses Zeynep", done.assistantReply, "Zeynep");
+
+    // Simulate the webhook route sending the booking link once
+    await updateState(PH, { bookingLinkSent: true });
+
+    // 22b/23. Follow-up thanks: no repeated completion, no link resend, no name corruption
+    const thanks = await processInboundMessage({ from: PH, body: "Teşekkürler, bilginiz için." });
+    assertEqual("follow-up: name intact", thanks.stateAfter.name, "Zeynep");
+    assertEqual("follow-up: bookingLinkSent flag intact (link not resent)", thanks.stateAfter.bookingLinkSent, true);
+    assertNotContains("follow-up: completion NOT repeated", thanks.assistantReply, "randevu talebinizi aldık");
+    assertContains("follow-up: short team acknowledgment", thanks.assistantReply, "Ekibimiz");
+
+    // 23b. Status message never overwrites the captured name
+    const status = await processInboundMessage({ from: PH, body: "gelmedi bir şey" });
+    assertEqual("status msg: name still Zeynep", status.stateAfter.name, "Zeynep");
+    assertNotContains("status msg: never addressed as Gelmedi", status.assistantReply, "Gelmedi");
+
+    // 24. Real question after completion is answered; lead data preserved
+    const q = await processInboundMessage({ from: PH, body: "Adresiniz nerede?" });
+    assertContains("post-completion question: address answered", q.assistantReply, "Nisantasi Ornek Sk. No:12");
+    assertContains("post-completion question: plain maps link", q.assistantReply, "Google Maps: https://maps.app.goo.gl/demo123");
+    assertEqual("post-completion question: name preserved", q.stateAfter.name, "Zeynep");
+    assertEqual("post-completion question: date preserved", q.stateAfter.preferredDate, "cumartesi");
+    assertEqual("post-completion question: stage stays complete", q.stateAfter.stage, "complete");
+    assertNotContains("post-completion question: completion NOT repeated", q.assistantReply, "randevu talebinizi aldık");
+
+    // New treatment inquiry reopens qualification WITHOUT corrupting contact data
+    const newInquiry = await processInboundMessage({ from: PH, body: "Peki saç ekimi fiyatı ne kadar?" });
+    assertEqual("new inquiry: reopens qualification", newInquiry.stateAfter.stage, "collect_qualification");
+    assertEqual("new inquiry: serviceCategory switches", newInquiry.stateAfter.serviceCategory, "hair_transplant");
+    assertEqual("new inquiry: name preserved", newInquiry.stateAfter.name, "Zeynep");
+    assertDefined("new inquiry: phone preserved", newInquiry.stateAfter.phone);
+    assertContains("new inquiry: asks graft question", newInquiry.assistantReply, "greft");
+    assertNotContains("new inquiry: no stale conflict question", newInquiry.assistantReply, "Daha önce");
+  } finally {
+    clinicConfig.locationInfo.address = savedLoc.address;
+    clinicConfig.locationInfo.googleMapsLink = savedLoc.googleMapsLink;
     if (savedKey !== undefined) process.env.ANTHROPIC_API_KEY = savedKey;
   }
 }
@@ -2107,6 +2564,11 @@ async function main() {
   testPremiumClinicCapabilities();
   await testConfiguredStartingPrices();
   testMultiLanguageDetection();
+  testPriceAndWhatsAppFormatting();
+  await testQualificationIntentGating();
+  await testMultilingualStaticFallbacks();
+  await testVerticalIsolationHardening();
+  await testCompletedStateBehavior();
 
   // End-to-end Claude API tests (require ANTHROPIC_API_KEY)
   const hasApiKey = !!process.env.ANTHROPIC_API_KEY;

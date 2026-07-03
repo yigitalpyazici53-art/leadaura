@@ -1,3 +1,5 @@
+import { bookingLinkText, SUPPORTED_LANGUAGES } from "./localization";
+
 export const clinicConfig = {
   name:           process.env.CLINIC_NAME            ?? "the clinic",
   primaryService: process.env.CLINIC_PRIMARY_SERVICE ?? "laser hair removal",
@@ -58,13 +60,15 @@ export function getStartingPriceFor(serviceCategory: string | undefined): string
   }
 }
 
-// Picks the booking-link message template for the active conversation language so the
-// follow-up link matches the completion reply. Turkish → Turkish template; every other
-// language (and unknown/undefined) → the configured default template.
+// Picks the booking-link message for the active conversation language so the follow-up
+// link matches the completion reply. Turkish and English keep the configurable env
+// templates (backward compatible); the other supported languages use the localized
+// wording so no English boilerplate leaks into a German/Arabic/Russian/French/Spanish
+// conversation. Unknown/undefined language → the configured default (English) template.
 export function formatBookingLinkMessage(url: string, language?: string): string {
-  const template =
-    language === "turkish"
-      ? clinicConfig.bookingLinkMessageTr
-      : clinicConfig.bookingLinkMessage;
-  return template.replace("{url}", url);
+  if (language === "turkish") return clinicConfig.bookingLinkMessageTr.replace("{url}", url);
+  if (language === undefined || language === "english" || !(SUPPORTED_LANGUAGES as readonly string[]).includes(language)) {
+    return clinicConfig.bookingLinkMessage.replace("{url}", url);
+  }
+  return bookingLinkText(url, language);
 }

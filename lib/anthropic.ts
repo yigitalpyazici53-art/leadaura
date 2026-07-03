@@ -1,5 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { buildSystemPrompt } from "./prompt";
+import { buildSystemPrompt, type PromptOptions } from "./prompt";
 import { sanitizeReplyText, ensureClinicNamePunctuation } from "./sanitize";
 import { clinicConfig } from "./clinicConfig";
 import type { ConversationState } from "./conversationState";
@@ -21,7 +21,8 @@ export function getAnthropicModel(): string {
 
 export async function generateSmsReply(
   customerMessage: string,
-  state: ConversationState
+  state: ConversationState,
+  promptOptions?: PromptOptions
 ): Promise<string> {
   if (!process.env.ANTHROPIC_API_KEY) {
     throw new Error("[Anthropic] ANTHROPIC_API_KEY is not set — AI replies are disabled");
@@ -44,7 +45,7 @@ export async function generateSmsReply(
     response = await getClient().messages.create({
       model,
       max_tokens: 256,
-      system: buildSystemPrompt(state),
+      system: buildSystemPrompt(state, promptOptions),
       messages,
     });
   } catch (err) {

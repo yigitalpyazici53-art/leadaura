@@ -77,9 +77,14 @@ const SERVICE_PATTERNS: Array<[RegExp, string]> = [
   [/veneer|diş\s*kaplama?|porselen\s*diş/i, "veneer"],
   [/diş\s*beyazlatma|teeth?\s*whiten|bleaching/i, "whitening"],
   [/\bdiş\b|\bdental\b/i, "dental"],
-  // English laser (most specific first)
+  // English laser (most specific first) — [aá] also catches Spanish "láser"
   [/laser\s+hair\s+removal/i, "laser hair removal"],
-  [/\blaser\b/i, "laser hair removal"],
+  [/\bl[aá]ser\b/i, "laser hair removal"],
+  // French/Spanish laser hair removal terms
+  [/[eé]pilation|depilaci[oó]n/i, "laser hair removal"],
+  // Russian / Arabic laser terms (Cyrillic and Arabic are outside JS \w — no \b)
+  [/лазер|эпиляц/i, "laser hair removal"],
+  [/ليزر/, "laser hair removal"],
   // Turkish laser
   [/lazer\s+epilasyon|epilasyon|lazer/i, "lazer epilasyon"],
   // Other aesthetic
@@ -148,6 +153,16 @@ const PRICE_INQUIRY_PATTERNS: RegExp[] = [
   /\bprice\b/i,
   /\bcost\b/i,
   /\brate\b/i,
+  // German
+  /kostet|\bpreis\b/i,
+  // French
+  /combien|co[uû]te|\bprix\b|\btarif\b/i,
+  // Spanish
+  /\bprecio\b|cuesta|cu[aá]nto\b/i,
+  // Russian (no \b — Cyrillic is outside JS \w)
+  /сколько\s+стоит|стоит|цена/i,
+  // Arabic
+  /سعر|تكلفة|كم\s+تكلف/,
 ];
 
 // Graft count for hair transplant — captures the leading number before "greft/graft" (singular or plural)
@@ -160,15 +175,17 @@ const TRAVELLING_ABROAD_PATTERNS: RegExp[] = [
   /(?:from|coming\s+from)\s+(?:the\s+)?(?:uk|usa|us|germany|france|italy|spain|netherlands|europe|overseas|outside)\b/i,
   /travel(?:l?ing)?\s+from\s+(?:the\s+)?(?:uk|usa|us|germany|france|italy|spain|netherlands|europe|overseas|outside)\b/i,
   /(?:coming|travelling|traveling|travel(?:l?ing)?)\s+to\s+istanbul/i,
-  // Turkish patterns — avoid \b around Turkish chars; use word-start context instead
-  /[İi]stanbul['']?[ae]\s*(?:geliyorum|geleceğim|geliyo)/i,
+  // Turkish patterns — avoid \b around Turkish chars; use word-start context instead.
+  // Apostrophe class includes the straight quote: the sanitizer now PRESERVES apostrophes.
+  /[İi]stanbul[''']?[ae]\s*(?:geliyorum|geleceğim|geliyo)/i,
   /seyahat\s+(?:ediyorum|edeceğim|edecek)/i,
 ];
 
 const ALREADY_LOCAL_PATTERNS: RegExp[] = [
-  // Turkish İ — cannot use /i flag for dotted-I, explicit [İi] required
-  /[İi]stanbul['']?dayım/i,
-  /[İi]stanbul['']?da\s+(?:yaşıyor|oturuyor|bulun)/i,
+  // Turkish İ — cannot use /i flag for dotted-I, explicit [İi] required.
+  // Apostrophe class includes the straight quote: the sanitizer now PRESERVES apostrophes.
+  /[İi]stanbul[''']?dayım/i,
+  /[İi]stanbul[''']?da\s+(?:yaşıyor|oturuyor|bulun)/i,
   /(?:zaten|halihazırda)\s+(?:[İi]stanbul|türkiye|burada)/i,
   /(?:already|currently)\s+in\s+(?:istanbul|turkey)/i,
   /\blocal\b/i,
@@ -215,10 +232,13 @@ const AVAILABILITY_INQUIRY_PATTERNS: RegExp[] = [
   /\bcan\s+I\s+(?:book|get|schedule)\s+(?:an?\s+)?appointment\b/i,
 ];
 
-// Patient asking about clinic devices or technology brands
+// Patient asking about clinic devices or technology brands.
+// Turkish suffixed forms ("cihazını kullanıyorsunuz") and an interposed treatment word
+// ("hangi lazer cihazı") are covered — [a-zçğışöü]* because Turkish letters are not \w.
 const DEVICE_INQUIRY_PATTERNS: RegExp[] = [
-  /\bhangi\s+(?:cihaz|teknoloji|marka|sistem)\b/i,
-  /\b(?:cihaz|teknoloji)\s+(?:ne|nedir|kullanıyor(?:sunuz)?)\b/i,
+  /\bhangi\s+(?:[a-zA-ZçğışöüÇĞİŞÖÜ]+\s+)?(?:cihaz|teknoloji|marka|sistem)/i,
+  /cihaz[a-zçğışöü]*\s*(?:ne\b|nedir|kullan|var\s*m[ıi])/i,
+  /teknoloji[a-zçğışöü]*\s*(?:ne\b|nedir|kullan)/i,
   /\b(?:which|what)\s+(?:\w+\s+)?(?:device|machine|technology|brand|equipment)\b/i,
   /\b(?:alexandrite|diode|nd[:\s]?yag|soprano|candela|fotona|lumenis|zimmer)\b/i,
 ];
@@ -232,6 +252,107 @@ const PRE_TREATMENT_INQUIRY_PATTERNS: RegExp[] = [
   /\bwhat\s+(?:should|do)\s+I\s+(?:do|prepare|avoid|know)\s+before\b/i,
   /\b(?:should\s+I\s+shave|should\s+I\s+avoid|can\s+I\s+eat)\b/i,
 ];
+
+// ── Informational-only message detection ─────────────────────────────────────
+// Deterministic rule: a qualification question is appended ONLY when the message shows
+// active treatment/appointment intent. Purely informational questions (location, metro,
+// airport transfer, parking, device brand, Instagram channel) are answered and the
+// conversation is left open — no automatic "Bu işlemi ilk kez mi yaptıracaksınız?".
+
+// Clinic location / directions questions (question forms only — a patient GIVING their
+// district, e.g. "Kadıköy şubesi uygun olur", must not match).
+const LOCATION_INQUIRY_RE =
+  /adres(?:iniz)?\s*(?:ne(?:dir)?|nerede|paylaş|alabilir)|nerede(?:siniz)?\b|konum(?:unuz)?\s*(?:ne(?:dir)?|nerede|paylaş)|yol\s*tarifi|nasıl\s+(?:gelebilirim|gelirim|ulaşırım|ulaşabilirim|giderim)|\bmetro\b|\bharita\b|\baddress\b|\bdirections?\b|where\s+(?:are\s+you|is\s+the\s+clinic)|how\s+(?:do|can)\s+i\s+(?:get|find|reach)|\bu-?bahn\b|wo\s+(?:ist|sind|finde)|\badresse\b|standort|\boù\b|d[oó]nde|direcci[oó]n|\bгде\b|адрес|أين|عنوان/i;
+
+// Airport transfer / shuttle questions
+const TRANSFER_INQUIRY_RE =
+  /havaliman|havaalan|airport|\btransfer\b|shuttle|flughafen|a[eé]roport|aeropuerto|аэропорт|трансфер|مطار/i;
+
+// Parking questions
+const PARKING_INQUIRY_RE = /otopark|park\s*yeri|vale\b|parking|parkplatz|estacionamiento|парковк|موقف/i;
+
+// Instagram contact-channel questions
+const INSTAGRAM_INQUIRY_RE = /instagram|\binsta\b|\big\b|\bdm\b/i;
+
+export function isLocationInquiry(message: string): boolean {
+  return LOCATION_INQUIRY_RE.test(message);
+}
+export function isTransferInquiry(message: string): boolean {
+  return TRANSFER_INQUIRY_RE.test(message);
+}
+export function isParkingInquiry(message: string): boolean {
+  return PARKING_INQUIRY_RE.test(message);
+}
+export function isInstagramInquiry(message: string): boolean {
+  return INSTAGRAM_INQUIRY_RE.test(message);
+}
+
+// Explicit "I want a treatment / when can I come / appointment planning" phrasing.
+const WANT_TREATMENT_RE =
+  /randevu|yaptırmak\s+istiyorum|istiyorum|gelmek\s+ist|ne\s+zaman\s+gelebilirim|planl[ıi]yorum|appointment|\bbook(?:ing)?\b|i\s+(?:want|would\s+like|need)\b|when\s+can\s+i\s+(?:come|visit)|planning\s+to\b|termin|rendez-vous|\bcita\b|запис|موعد/i;
+
+/**
+ * Strong treatment/appointment intent signals: any of these means the qualification
+ * flow proceeds normally on this turn.
+ */
+function hasTreatmentIntent(message: string, slots: ExtractedSlots): boolean {
+  return !!(
+    slots.priceInquired ||
+    slots.availabilityInquiry ||
+    slots.preferredDate ||
+    slots.preferredTime ||
+    slots.firstTimeLaser !== undefined ||
+    slots.estimatedGrafts !== undefined ||
+    slots.travellingFromAbroad !== undefined ||
+    slots.teethCountOrScope ||
+    slots.dentalTreatmentType ||
+    slots.treatmentTimeline ||
+    WANT_TREATMENT_RE.test(message)
+  );
+}
+
+/**
+ * Deterministic gate for the "answer only, do not qualify" rule.
+ *
+ * True when the message is an informational-only question: device brand, clinic
+ * location/directions, airport transfer, parking, Instagram channel — or a pre-treatment
+ * question OUTSIDE an active qualification flow. Any strong treatment/appointment intent
+ * signal (price, availability, date/time, wanting a treatment, qualification answers)
+ * makes it false, so the flow still advances for real inquiries.
+ *
+ * Pre-treatment questions while the conversation is already mid-flow (service category
+ * known and a collection stage active) are NOT informational-only: the assistant answers
+ * the question AND continues with the missing qualification field.
+ */
+export function isInformationalOnlyMessage(
+  message: string,
+  slots: ExtractedSlots,
+  state: { serviceCategory?: ServiceCategory; stage?: string }
+): boolean {
+  if (hasTreatmentIntent(message, slots)) return false;
+
+  if (
+    slots.deviceInquiry ||
+    isInstagramInquiry(message) ||
+    isTransferInquiry(message) ||
+    isParkingInquiry(message) ||
+    isLocationInquiry(message)
+  ) {
+    return true;
+  }
+
+  if (slots.preTreatmentInquiry) {
+    const inActiveFlow =
+      !!state.serviceCategory &&
+      state.serviceCategory !== "other" &&
+      (state.stage === "collect_qualification" ||
+        state.stage === "collect_datetime" ||
+        state.stage === "collect_name");
+    return !inActiveFlow;
+  }
+
+  return false;
+}
 
 /**
  * Detects the high-level service category from a service name or treatment area string.
@@ -594,19 +715,19 @@ const ENGLISH_SIGNAL_RE =
  * Turkish-specific chars (ğ, ı, İ, Ğ) are the strongest Turkish signal.
  */
 export function detectMessageLanguageConfident(message: string): MessageLanguage | null {
-  // Turkish: dotted-I chars are unambiguous; fall back to Turkish keywords
-  if (/[ğıİĞ]/.test(message)) return "turkish";
+  // Turkish: dotted-I and ş/ğ chars are unambiguous; fall back to Turkish keywords
+  if (/[ğıİĞşŞ]/.test(message)) return "turkish";
   if (/\b(merhaba|lazer|epilasyon|fiyat|randevu|için|istiyorum|uygun|tamam|evet|teşekkür)\b/i.test(message)) return "turkish";
   // Arabic script
   if (/[؀-ۿ]/.test(message)) return "arabic";
   // Cyrillic (Russian and related)
   if (/[а-яёА-ЯЁ]/.test(message)) return "russian";
   // German: ä/Ä are low-overlap; ö/ü shared with Turkish (already checked) and French
-  if (/[äÄ]/.test(message) || /\b(wie|viel|kostet|termin|behandlung|preis|haar(?:entfernung|transplantation))\b/i.test(message)) return "german";
+  if (/[äÄß]/.test(message) || /\b(wie|viel|kostet|termin|behandlung|preis|hallo|guten|möchte|haar(?:entfernung|transplantation))\b/i.test(message)) return "german";
   // French: distinctly French chars (à, â, ê, î, ô, œ, etc.) or keywords
-  if (/[àâæêîïôœùûÿÀÂÆÊÎÏÔŒÙÛŸ]/.test(message) || /\b(bonjour|bonsoir|combien|traitement|rendez-vous|épilation)\b/i.test(message)) return "french";
+  if (/[àâæêîïôœùûÿÀÂÆÊÎÏÔŒÙÛŸ]/.test(message) || /\b(bonjour|bonsoir|combien|traitement|rendez-vous|épilation|prix|merci|greffe|cheveux)\b/i.test(message)) return "french";
   // Spanish: inverted punctuation, ñ, or common clinic keywords
-  if (/[¿¡ñÑ]/.test(message) || /\b(hola|precio|cu[aá]nto|tratamiento|depilaci[oó]n)\b/i.test(message)) return "spanish";
+  if (/[¿¡ñÑ]/.test(message) || /\b(hola|precio|cu[aá]nto|tratamiento|depilaci[oó]n|gracias|cita|dientes|injerto)\b/i.test(message)) return "spanish";
   // English: only when a positive English signal is present — never as a bare default.
   if (ENGLISH_SIGNAL_RE.test(message)) return "english";
   return null;
