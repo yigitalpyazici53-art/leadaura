@@ -235,6 +235,21 @@ const TRAVELLING_ABROAD_PATTERNS: RegExp[] = [
   // Apostrophe class includes the straight quote: the sanitizer now PRESERVES apostrophes.
   /[İi]stanbul[''']?[ae]\s*(?:geliyorum|geleceğim|geliyo)/i,
   /seyahat\s+(?:ediyorum|edeceğim|edecek)/i,
+  // German — "from abroad" / "coming/travelling/flying to Istanbul"
+  /aus\s+dem\s+ausland|vom\s+ausland/i,
+  /(?:komme|reise|fliege)\s+(?:nach\s+istanbul|aus\s+dem\s+ausland)/i,
+  // French — "from abroad" / "I'm coming/travelling to Istanbul"
+  /de\s+l['']?[ée]tranger/i,
+  /(?:viens|venir|voyage|arrive)\s+(?:à|a)\s+istanbul/i,
+  // Spanish — "from abroad" / "I travel/come to Istanbul" (Estambul)
+  /del\s+extranjero|desde\s+el\s+extranjero/i,
+  /(?:vengo|viajo|llego)\s+a\s+estambul/i,
+  // Russian — "from abroad" / "coming to Istanbul" (Стамбул, accusative)
+  /из-за\s+границы/i,
+  /(?:приезжаю|прилетаю|еду)\s+в\s+стамбул\b/i,
+  // Arabic — "from abroad" / "coming to Istanbul" (no JS \b — Arabic is outside \w)
+  /من\s+الخارج/,
+  /(?:قادم|أسافر|آتي)\s+إلى\s+[اإ]س[تط]ا?نبول/,
 ];
 
 const ALREADY_LOCAL_PATTERNS: RegExp[] = [
@@ -245,6 +260,22 @@ const ALREADY_LOCAL_PATTERNS: RegExp[] = [
   /(?:zaten|halihazırda)\s+(?:[İi]stanbul|türkiye|burada)/i,
   /(?:already|currently)\s+in\s+(?:istanbul|turkey)/i,
   /\blocal\b/i,
+  // German — "I'm / I live in Istanbul (Turkey)", "already in Istanbul / der Türkei"
+  /ich\s+(?:bin|wohne|lebe)\s+(?:schon\s+|bereits\s+|jetzt\s+)?in\s+(?:istanbul|der\s+t[üu]rkei)/i,
+  /(?:schon|bereits)\s+in\s+(?:istanbul|der\s+t[üu]rkei)/i,
+  // French — "I'm / I live in Istanbul / Turquie", "already in Istanbul"
+  /(?:je\s+suis|j['']?habite|je\s+vis)\s+(?:déjà\s+)?(?:à|a|en)\s+(?:istanbul|turquie)/i,
+  /déjà\s+(?:à|a|en)\s+(?:istanbul|turquie)/i,
+  // Spanish — "I'm / I live in Estambul / Turquía", "already in Estambul"
+  /(?:estoy|vivo|resido)\s+(?:ya\s+)?en\s+(?:estambul|turqu[ií]a)/i,
+  /ya\s+(?:estoy\s+)?en\s+(?:estambul|turqu[ií]a)/i,
+  // Russian — "I'm / I live in Istanbul / Turkey" (prepositional Стамбуле/Турции)
+  /(?:я\s+)?(?:уже\s+)?(?:живу\s+)?в\s+(?:стамбуле|турции)/i,
+  /уже\s+в\s+(?:стамбуле|турции)/i,
+  // Arabic — "I'm / I live in Istanbul", "already in Istanbul / Turkey"
+  /(?:أنا\s+)?(?:موجود\s+)?في\s+[اإ]س[تط]ا?نبول/,
+  /أعيش\s+في\s+[اإ]س[تط]ا?نبول/,
+  /بالفعل\s+في\s+(?:[اإ]س[تط]ا?نبول|تركيا)/,
 ];
 
 // Dental treatment type — specific types only (generic "\bdiş\b" lives in SERVICE_PATTERNS)
@@ -257,13 +288,24 @@ const DENTAL_TYPE_PATTERNS: Array<[RegExp, string]> = [
   [/diş\s*dolgu|filling/i, "filling"],
 ];
 
-// Teeth count or treatment scope for dental flow
+// Teeth count or treatment scope for dental flow.
+// Teeth nouns and scope words are covered across the seven supported languages so a
+// non-TR/EN patient answering the scope question in their own language still sets
+// teethCountOrScope — the dental completion gate. Cyrillic/Arabic are outside JS \w.
+const TEETH_NOUN = "diş|tooth|teeth|z[äa]hne?|dents?|dientes?|зуб(?:ов|а|ы)?|أسنان|سن";
 const TEETH_SCOPE_PATTERNS: Array<[RegExp, ((m: RegExpMatchArray) => string) | string]> = [
   [/full\s*smile(?:\s*design)?|tüm\s*(?:ağız|dişler?)/i, "full smile"],
-  [/(\d+)\s*(?:diş|tooth|teeth)/i, (m: RegExpMatchArray) => `${m[1]} teeth`],
-  [/(?:ön|front)\s*(?:dişler?|teeth)/i, "front teeth"],
-  [/(?:arka|back)\s*(?:dişler?|teeth)/i, "back teeth"],
-  [/(?:birkaç|a\s+few|some)\s*(?:diş|teeth)/i, "a few teeth"],
+  // Whole-mouth / full-arch scope across DE/FR/ES/RU/AR → same "full smile" value
+  [/ganzes\s+gebiss|alle\s+z[äa]hne|komplettes\s+(?:gebiss|l[äa]cheln)/i, "full smile"],
+  [/toutes\s+les\s+dents|sourire\s+complet|toute\s+la\s+bouche/i, "full smile"],
+  [/todos\s+los\s+dientes|toda\s+la\s+boca|sonrisa\s+completa/i, "full smile"],
+  [/все\s+зубы|весь\s+рот/i, "full smile"],
+  [/كل\s+الأسنان|جميع\s+الأسنان|الفم\s+بالكامل/, "full smile"],
+  [new RegExp(`(\\d+)\\s*(?:${TEETH_NOUN})`, "i"), (m: RegExpMatchArray) => `${m[1]} teeth`],
+  // Front teeth — adjective-before-noun for Latin/Cyrillic; noun-before-adjective for Arabic
+  [new RegExp(`(?:ön|front|vordere?|avant|frontales?|передни[ехй])\\s*(?:${TEETH_NOUN})|الأسنان\\s+الأمامية`, "i"), "front teeth"],
+  [new RegExp(`(?:arka|back|hintere?|arri[èe]re|traseros?|задни[ехй])\\s*(?:${TEETH_NOUN})|الأسنان\\s+الخلفية`, "i"), "back teeth"],
+  [new RegExp(`(?:birkaç|a\\s+few|some|einige|ein\\s+paar|quelques|algunos|несколько|بعض)\\s*(?:${TEETH_NOUN})`, "i"), "a few teeth"],
 ];
 
 // Desired treatment timeline (month/date range signals, not a specific appointment day)

@@ -1138,6 +1138,160 @@ async function main() {
     else delete process.env.CLINIC_BOOKING_URL;
   }
 
+  // ── Section 15: German hair transplant — travel-origin EXTRACTION → complete → link ──
+  // Same latent multilingual gap as Section 14, but for the hair-transplant vertical.
+  // The completion gate is travellingFromAbroad (qualificationComplete), which was fed
+  // only by TR/EN patterns — so a German patient answering the travel-origin question
+  // IN GERMAN never set the field, the flow stuck at collect_qualification, and the
+  // booking-link handoff was skipped. This drives the REAL extraction path end-to-end.
+  console.log("\n── 15. German hair transplant: travel-origin extraction → complete → booking link ──");
+
+  const DEH_SAVED_URL = process.env.CLINIC_BOOKING_URL;
+  const DEH_BOOKING_URL = "https://clinic.example/book/de-hair";
+  try {
+    process.env.CLINIC_BOOKING_URL = DEH_BOOKING_URL;
+
+    const PHONE_DE_HAIR = "905551112471";
+    await resetStateForTest(PHONE_DE_HAIR);
+
+    // Turn 1: German FUE hair-transplant price inquiry → hair_transplant, gated at qualification.
+    const dh1 = await processInboundMessage({
+      from: PHONE_DE_HAIR,
+      body: "Was kostet eine FUE Haartransplantation?",
+      source: "whatsapp",
+    });
+    assertEqual("DH1: serviceCategory = hair_transplant", dh1.stateAfter.serviceCategory, "hair_transplant");
+    assertEqual("DH1: detectedLanguage = german", dh1.stateAfter.detectedLanguage, "german");
+    assertEqual("DH1: travellingFromAbroad missing → gated", dh1.stateAfter.travellingFromAbroad, undefined);
+    assertEqual("DH1: stage = collect_qualification (exact)", dh1.stateAfter.stage, "collect_qualification");
+
+    // Turn 2: the patient answers the travel-origin question IN GERMAN.
+    // Before the fix this did not set travellingFromAbroad and the flow got permanently stuck.
+    const dh2 = await processInboundMessage({
+      from: PHONE_DE_HAIR,
+      body: "Ich komme aus dem Ausland nach Istanbul.",
+      source: "whatsapp",
+    });
+    assertEqual("DH2: travellingFromAbroad extracted from German answer (regression)", dh2.stateAfter.travellingFromAbroad, true);
+    assertEqual("DH2: qualification answered → collect_datetime (exact)", dh2.stateAfter.stage, "collect_datetime");
+
+    // Turn 3: language-neutral numeric date/time advances past datetime.
+    const dh3 = await processInboundMessage({
+      from: PHONE_DE_HAIR,
+      body: "Nächste Woche, am 20.07 um 10:00",
+      source: "whatsapp",
+    });
+    assertDefined("DH3: date or time captured", dh3.stateAfter.preferredDate ?? dh3.stateAfter.preferredTime);
+    assertEqual("DH3: stage = collect_name (exact)", dh3.stateAfter.stage, "collect_name");
+
+    // Turn 4: name + phone → complete.
+    const dh4 = await processInboundMessage({
+      from: PHONE_DE_HAIR,
+      body: "Anna, +49 151 23456789",
+      source: "whatsapp",
+    });
+    assertContains("DH4: name captured", dh4.stateAfter.name ?? "", "Anna");
+    assertDefined("DH4: phone captured", dh4.stateAfter.phone);
+    assertEqual("DH4: stage = complete (exact) — flow now completes", dh4.stateAfter.stage, "complete");
+    assertEqual("DH4: detectedLanguage still german", dh4.stateAfter.detectedLanguage, "german");
+
+    // Turn 4 booking handoff: the German booking link is sent.
+    assertEqual("DH4: bookingLinkSent false before handoff", Boolean(dh4.stateAfter.bookingLinkSent), false);
+    const dhSent: Array<{ to: string; body: string }> = [];
+    const dhOutcome = await handleBookingHandoff({
+      from: PHONE_DE_HAIR,
+      stateAfter: dh4.stateAfter,
+      channel: "meta",
+      send: async (to, body) => { dhSent.push({ to, body }); },
+    });
+    assertEqual("DH4: handoff attempted", dhOutcome.attempted, true);
+    assertEqual("DH4: handoff sent=true (booking link delivered)", dhOutcome.sent, true);
+    assertEqual("DH4: exactly one booking message", dhSent.length, 1);
+    assertContains("DH4: booking link is German (Terminanfrage)", dhSent[0].body, "Terminanfrage");
+    assertContains("DH4: booking link contains the URL", dhSent[0].body, DEH_BOOKING_URL);
+    assertNotContains("DH4: booking link not English", dhSent[0].body, "You can complete");
+    console.log(`  DH4 stage=${dh4.stateAfter.stage} bookingSent=${dhOutcome.sent} link="${dhSent[0]?.body.slice(0, 70)}"`);
+  } finally {
+    if (DEH_SAVED_URL !== undefined) process.env.CLINIC_BOOKING_URL = DEH_SAVED_URL;
+    else delete process.env.CLINIC_BOOKING_URL;
+  }
+
+  // ── Section 16: German dental — teeth-scope EXTRACTION → complete → link ─────
+  // Same latent multilingual gap, dental vertical. The completion gate is
+  // teethCountOrScope, previously fed only by TR/EN teeth nouns — so a German patient
+  // stating the scope IN GERMAN ("6 Zähne") never set the field and the flow stalled.
+  console.log("\n── 16. German dental: teeth-scope extraction → complete → booking link ──");
+
+  const DED_SAVED_URL = process.env.CLINIC_BOOKING_URL;
+  const DED_BOOKING_URL = "https://clinic.example/book/de-dental";
+  try {
+    process.env.CLINIC_BOOKING_URL = DED_BOOKING_URL;
+
+    const PHONE_DE_DENTAL = "905551112472";
+    await resetStateForTest(PHONE_DE_DENTAL);
+
+    // Turn 1: German veneer price inquiry → dental, gated at qualification.
+    const dd1 = await processInboundMessage({
+      from: PHONE_DE_DENTAL,
+      body: "Was kostet ein Veneer?",
+      source: "whatsapp",
+    });
+    assertEqual("DD1: serviceCategory = dental", dd1.stateAfter.serviceCategory, "dental");
+    assertEqual("DD1: detectedLanguage = german", dd1.stateAfter.detectedLanguage, "german");
+    assertEqual("DD1: teethCountOrScope missing → gated", dd1.stateAfter.teethCountOrScope, undefined);
+    assertEqual("DD1: stage = collect_qualification (exact)", dd1.stateAfter.stage, "collect_qualification");
+
+    // Turn 2: the patient answers the scope question IN GERMAN.
+    // Before the fix "6 Zähne" was not extracted and the flow got permanently stuck.
+    const dd2 = await processInboundMessage({
+      from: PHONE_DE_DENTAL,
+      body: "Ich möchte 6 Zähne machen lassen.",
+      source: "whatsapp",
+    });
+    assertContains("DD2: teethCountOrScope extracted from German answer (regression)", dd2.stateAfter.teethCountOrScope ?? "", "6 teeth");
+    assertEqual("DD2: qualification answered → collect_datetime (exact)", dd2.stateAfter.stage, "collect_datetime");
+
+    // Turn 3: language-neutral numeric date/time advances past datetime.
+    const dd3 = await processInboundMessage({
+      from: PHONE_DE_DENTAL,
+      body: "Am 21.07 um 11:00",
+      source: "whatsapp",
+    });
+    assertDefined("DD3: date or time captured", dd3.stateAfter.preferredDate ?? dd3.stateAfter.preferredTime);
+    assertEqual("DD3: stage = collect_name (exact)", dd3.stateAfter.stage, "collect_name");
+
+    // Turn 4: name + phone → complete.
+    const dd4 = await processInboundMessage({
+      from: PHONE_DE_DENTAL,
+      body: "Max, +49 160 1234567",
+      source: "whatsapp",
+    });
+    assertContains("DD4: name captured", dd4.stateAfter.name ?? "", "Max");
+    assertDefined("DD4: phone captured", dd4.stateAfter.phone);
+    assertEqual("DD4: stage = complete (exact) — flow now completes", dd4.stateAfter.stage, "complete");
+    assertEqual("DD4: detectedLanguage still german", dd4.stateAfter.detectedLanguage, "german");
+
+    // Turn 4 booking handoff: the German booking link is sent.
+    assertEqual("DD4: bookingLinkSent false before handoff", Boolean(dd4.stateAfter.bookingLinkSent), false);
+    const ddSent: Array<{ to: string; body: string }> = [];
+    const ddOutcome = await handleBookingHandoff({
+      from: PHONE_DE_DENTAL,
+      stateAfter: dd4.stateAfter,
+      channel: "meta",
+      send: async (to, body) => { ddSent.push({ to, body }); },
+    });
+    assertEqual("DD4: handoff attempted", ddOutcome.attempted, true);
+    assertEqual("DD4: handoff sent=true (booking link delivered)", ddOutcome.sent, true);
+    assertEqual("DD4: exactly one booking message", ddSent.length, 1);
+    assertContains("DD4: booking link is German (Terminanfrage)", ddSent[0].body, "Terminanfrage");
+    assertContains("DD4: booking link contains the URL", ddSent[0].body, DED_BOOKING_URL);
+    assertNotContains("DD4: booking link not English", ddSent[0].body, "You can complete");
+    console.log(`  DD4 stage=${dd4.stateAfter.stage} bookingSent=${ddOutcome.sent} link="${ddSent[0]?.body.slice(0, 70)}"`);
+  } finally {
+    if (DED_SAVED_URL !== undefined) process.env.CLINIC_BOOKING_URL = DED_SAVED_URL;
+    else delete process.env.CLINIC_BOOKING_URL;
+  }
+
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");
   if (failures === 0) {
