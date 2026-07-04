@@ -1055,6 +1055,89 @@ async function main() {
     else delete process.env.CLINIC_BOOKING_URL;
   }
 
+  // ── Section 14: German full-body laser — first-time EXTRACTION → complete → link ──
+  // Regression for the reported production bug: a German patient asking
+  // "Was kostet eine Ganzkörper-Laserbehandlung?" and then answering the first-time
+  // question IN GERMAN. The German answer was never extracted (firstTimeLaser stayed
+  // undefined), so the laser flow was stuck at collect_qualification forever, never
+  // reached `complete`, and the booking-link handoff was permanently skipped with
+  // reason=not_complete — the user saw a completion-styled reply but no booking link.
+  //
+  // Unlike Section 13d (BH4), which INJECTS firstTimeLaser via _setStateForTest, this
+  // drives the REAL extraction path end-to-end so the gap cannot regress unnoticed.
+  console.log("\n── 14. German full-body laser: first-time extraction → complete → booking link ──");
+
+  const DE_SAVED_URL = process.env.CLINIC_BOOKING_URL;
+  const DE_BOOKING_URL = "https://clinic.example/book/de";
+  try {
+    process.env.CLINIC_BOOKING_URL = DE_BOOKING_URL;
+
+    const PHONE_DE_E2E = "905551112470";
+    await resetStateForTest(PHONE_DE_E2E);
+
+    // Turn 1: German full-body laser price inquiry → laser category, gated at qualification.
+    const de1 = await processInboundMessage({
+      from: PHONE_DE_E2E,
+      body: "Was kostet eine Ganzkörper-Laserbehandlung?",
+      source: "whatsapp",
+    });
+    assertEqual("DE1: serviceCategory = laser", de1.stateAfter.serviceCategory, "laser");
+    assertEqual("DE1: detectedLanguage = german", de1.stateAfter.detectedLanguage, "german");
+    assertEqual("DE1: firstTimeLaser missing → gated", de1.stateAfter.firstTimeLaser, undefined);
+    assertEqual("DE1: stage = collect_qualification (exact)", de1.stateAfter.stage, "collect_qualification");
+
+    // Turn 2: the patient answers the first-time question IN GERMAN.
+    // Before the fix this did not set firstTimeLaser and the flow got permanently stuck.
+    const de2 = await processInboundMessage({
+      from: PHONE_DE_E2E,
+      body: "Ja, das ist meine erste Laserbehandlung",
+      source: "whatsapp",
+    });
+    assertEqual("DE2: firstTimeLaser extracted from German answer (regression)", de2.stateAfter.firstTimeLaser, true);
+    assertEqual("DE2: qualification answered → collect_datetime (exact)", de2.stateAfter.stage, "collect_datetime");
+
+    // Turn 3: language-neutral time (14:00) advances past datetime.
+    const de3 = await processInboundMessage({
+      from: PHONE_DE_E2E,
+      body: "Morgen um 14:00",
+      source: "whatsapp",
+    });
+    assertContains("DE3: preferredTime captured", de3.stateAfter.preferredTime ?? "", "14:00");
+    assertEqual("DE3: stage = collect_name (exact)", de3.stateAfter.stage, "collect_name");
+
+    // Turn 4: name + phone → complete.
+    const de4 = await processInboundMessage({
+      from: PHONE_DE_E2E,
+      body: "Anna, +49 151 23456789",
+      source: "whatsapp",
+    });
+    assertContains("DE4: name captured", de4.stateAfter.name ?? "", "Anna");
+    assertDefined("DE4: phone captured", de4.stateAfter.phone);
+    assertEqual("DE4: stage = complete (exact) — flow now completes", de4.stateAfter.stage, "complete");
+    assertEqual("DE4: detectedLanguage still german", de4.stateAfter.detectedLanguage, "german");
+
+    // Turn 4 booking handoff: with the flow finally reaching complete, the German booking
+    // link is sent — the exact message the production user was missing.
+    assertEqual("DE4: bookingLinkSent false before handoff", Boolean(de4.stateAfter.bookingLinkSent), false);
+    const deSent: Array<{ to: string; body: string }> = [];
+    const deOutcome = await handleBookingHandoff({
+      from: PHONE_DE_E2E,
+      stateAfter: de4.stateAfter,
+      channel: "meta",
+      send: async (to, body) => { deSent.push({ to, body }); },
+    });
+    assertEqual("DE4: handoff attempted", deOutcome.attempted, true);
+    assertEqual("DE4: handoff sent=true (booking link delivered)", deOutcome.sent, true);
+    assertEqual("DE4: exactly one booking message", deSent.length, 1);
+    assertContains("DE4: booking link is German (Terminanfrage)", deSent[0].body, "Terminanfrage");
+    assertContains("DE4: booking link contains the URL", deSent[0].body, DE_BOOKING_URL);
+    assertNotContains("DE4: booking link not English", deSent[0].body, "You can complete");
+    console.log(`  DE4 stage=${de4.stateAfter.stage} bookingSent=${deOutcome.sent} link="${deSent[0]?.body.slice(0, 70)}"`);
+  } finally {
+    if (DE_SAVED_URL !== undefined) process.env.CLINIC_BOOKING_URL = DE_SAVED_URL;
+    else delete process.env.CLINIC_BOOKING_URL;
+  }
+
   // ── Summary ───────────────────────────────────────────────────────────────
   console.log("\n══════════════════════════════════════");
   if (failures === 0) {

@@ -125,6 +125,10 @@ const TREATMENT_AREA_PATTERNS: Array<[RegExp, string]> = [
 ];
 
 // Returning-customer signals — checked before first-time to avoid false negatives.
+// Covers all seven supported languages: a "not my first time / I already had sessions"
+// answer must be recognised in the SAME language the patient is conversing in, otherwise
+// the laser qualification gate (firstTimeLaser) never resolves and the flow can never
+// reach `complete`. Cyrillic/Arabic have no JS \b — use explicit context instead.
 const FIRST_TIME_FALSE_PATTERNS: RegExp[] = [
   /daha\s+önce\s+yaptırd[ıi][mn]/i,
   /devam\s+ediyorum/i,
@@ -134,10 +138,31 @@ const FIRST_TIME_FALSE_PATTERNS: RegExp[] = [
   /tekrar\s+başla/i,
   /seansa?\s+devam/i,
   /önceden\s+yaptırd[ıi][mn]/i,
+  // German — "not the first time", "already had some sessions / started"
+  /\bnicht\s+(?:mein\s+|das\s+)?erste[sn]?\s+mal\b/i,
+  /\bschon\s+(?:einige|mehrere|ein\s+paar|paar|mal|einmal)\b/i,
+  /\bbereits\s+(?:behandelt|begonnen|angefangen|gemacht|sitzungen)\b/i,
+  /\bwar\s+schon\b/i,
+  // French — "not my first time", "already did / had / started"
+  /pas\s+(?:ma\s+|la\s+|sa\s+)?premi[eè]re\s+fois/i,
+  /d[ée]j[àa]\s+(?:fait|eu|commenc[ée]|essay[ée])/i,
+  // Spanish — "it's not my first time", "I already did it"
+  /no\s+(?:es|era)\s+(?:mi\s+|la\s+|su\s+)?primera\s+vez/i,
+  /ya\s+(?:lo\s+)?(?:he\s+)?(?:hecho|empec[ée]|comenc[ée]|realic[ée])/i,
+  // Russian — "not the first time", "already did / went through"
+  /не\s+впервые/i,
+  /уже\s+(?:делал|делала|проходил|проходила|начал|начала)/i,
+  // Arabic — "it's not the first time", "I have done this before"
+  /ليست?\s+(?:هي\s+)?(?:المرة\s+)?الأولى/,
+  /سبق\s+(?:لي|أن)/,
 ];
 
 // First-time signals.
 // Use [İi] explicitly — JavaScript regex /i flag does not map 'i' ↔ 'İ' (Turkish dotted-I).
+// The non-Turkish/English languages were missing here, which meant a German (or French/
+// Spanish/Russian/Arabic) patient answering "yes, first time" never set firstTimeLaser —
+// so the laser flow stayed at collect_qualification forever and the booking-link handoff
+// was permanently skipped with reason=not_complete.
 const FIRST_TIME_TRUE_PATTERNS: RegExp[] = [
   /[İi]lk\s+kez/,
   /[İi]lk\s+defa/,
@@ -150,6 +175,22 @@ const FIRST_TIME_TRUE_PATTERNS: RegExp[] = [
   /\bfirst\s+time\b/i,
   /\bfirst\s+visit\b/i,
   /\bnever\s+(?:done|had|been)\b/i,
+  // German — "first time", "first (laser) treatment"
+  /\bzum\s+ersten\s+mal\b/i,
+  /\berste[sn]?\s+mal\b/i,
+  /\berste\s+(?:laser)?behandlung\b/i,
+  // French — "first time", "never done/tried"
+  /premi[eè]re\s+fois/i,
+  /jamais\s+(?:fait|essay[ée]|eu)/i,
+  // Spanish — "first time", "never done it"
+  /primera\s+vez/i,
+  /nunca\s+(?:lo\s+)?(?:he\s+)?hecho/i,
+  // Russian — "first time", "never did"
+  /впервые/i,
+  /перв(?:ый|ая)\s+раз/i,
+  /никогда\s+(?:не\s+)?(?:делал|делала|проходил|проходила)/i,
+  // Arabic — "first time"
+  /أول\s+مرة/,
 ];
 
 // Price / package inquiry signals.
