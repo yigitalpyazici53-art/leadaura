@@ -7,16 +7,19 @@
  * at app/api/whatsapp/nurabla/route.ts.
  *
  * The restaurant operates multiple branches; each branch has its own address
- * and Google Maps link, while the menu is shared across branches.
+ * and Google Maps link, while the menu is shared across branches. Location
+ * replies list a fixed set of branches — we never ask the user to choose.
  */
 
 export type NurablaBranchKey = "cekmekoy" | "umraniye" | "basaksehir";
 
 export interface NurablaBranch {
-  /** Display name (Turkish), used in replies and the branch-selection prompt. */
+  /** Display name (Turkish), used in location replies. */
   name: string;
   address: string;
   mapsUrl: string;
+  /** Branch phone number. Optional — only active branches publish one. */
+  phone?: string;
 }
 
 export interface NurablaBusiness {
@@ -34,6 +37,7 @@ export const NURABLA: NurablaBusiness = {
       address: "Merkez Mahallesi, Nefer Sokak No:15, 34782 Çekmeköy/İstanbul",
       mapsUrl:
         "https://www.google.com/maps/search/?api=1&query=Nur+Abla+Karadeniz+Sofrası+Çekmeköy",
+      phone: "0216 642 53 10",
     },
     umraniye: {
       name: "Ümraniye",
@@ -48,23 +52,27 @@ export const NURABLA: NurablaBusiness = {
         "Ziya Gökalp Mah., Süleyman Demirel Bulv. Mall of İstanbul AVM No: 523, 34490 Başakşehir/İstanbul",
       mapsUrl:
         "https://www.google.com/maps/search/?api=1&query=Nur+Abla+Karadeniz+Sofrası+Başakşehir",
+      phone: "0212 809 01 77",
     },
   },
 };
 
-/** Reply sent when we cannot confidently answer — never invent information. */
-export const NURABLA_FALLBACK =
-  "Bu konuda size Nurabla ekibi yardımcı olacaktır.";
+/**
+ * Branches included in a location reply, in display order. Ümraniye is
+ * intentionally omitted from location replies.
+ */
+const LOCATION_BRANCH_KEYS: NurablaBranchKey[] = ["cekmekoy", "basaksehir"];
 
 /**
- * Asked when the user wants a location but has not told us which branch — we
- * must never guess, so we present the branch list and wait for a choice.
+ * Reply sent when we cannot confidently answer — never invent information.
+ * Directs the customer to the active branch phone numbers instead.
  */
-export const NURABLA_BRANCH_PROMPT =
-  "Hangi şubemizin konumunu paylaşmamızı istersiniz?\n\n" +
-  "1. Çekmeköy\n" +
-  "2. Ümraniye\n" +
-  "3. Başakşehir";
+export const NURABLA_FALLBACK =
+  "Bu konuda Nurabla ekibimiz size yardımcı olabilir.\n\n" +
+  LOCATION_BRANCH_KEYS.map((key) => {
+    const branch = NURABLA.branches[key];
+    return `📞 ${branch.name}: ${branch.phone}`;
+  }).join("\n");
 
 const LOCATION_KEYWORDS = [
   "konum",
@@ -83,16 +91,6 @@ const MENU_KEYWORDS = [
   "ne var",
   "kahvaltı",
 ];
-
-/**
- * Branch name variations (with and without Turkish diacritics) mapped to the
- * canonical branch key. Matched against the Turkish-normalized message body.
- */
-const BRANCH_KEYWORDS: Record<NurablaBranchKey, string[]> = {
-  cekmekoy: ["çekmeköy", "cekmekoy"],
-  umraniye: ["ümraniye", "umraniye"],
-  basaksehir: ["başakşehir", "basaksehir"],
-};
 
 /**
  * Lowercase text using Turkish locale rules so that İ→i and I→ı map correctly
@@ -123,24 +121,6 @@ export function detectNurablaIntent(body: string): NurablaIntent {
   };
 }
 
-/**
- * Detect which branch (if any) the message refers to. Returns the canonical
- * branch key, or null when no branch is mentioned — callers must not guess.
- */
-export function detectNurablaBranch(body: string): NurablaBranchKey | null {
-  const normalized = normalizeTurkish(body);
-  if (!normalized) {
-    return null;
-  }
-
-  for (const key of Object.keys(BRANCH_KEYWORDS) as NurablaBranchKey[]) {
-    if (BRANCH_KEYWORDS[key].some((kw) => normalized.includes(normalizeTurkish(kw)))) {
-      return key;
-    }
-  }
-  return null;
-}
-
 function branchLocationText(key: NurablaBranchKey): string {
   const branch = NURABLA.branches[key];
   return (
@@ -150,6 +130,11 @@ function branchLocationText(key: NurablaBranchKey): string {
   );
 }
 
+/** Location reply listing every branch in {@link LOCATION_BRANCH_KEYS}. */
+function locationText(): string {
+  return LOCATION_BRANCH_KEYS.map(branchLocationText).join("\n\n");
+}
+
 function menuText(): string {
   return `Menümüz: ${NURABLA.menuUrl}`;
 }
@@ -157,26 +142,19 @@ function menuText(): string {
 /**
  * Build the plain-text reply for an incoming message.
  *
- * - Location + known branch → that branch's address and maps link.
- * - Location without a branch → the branch-selection prompt (never guessed).
+ * - Location → the Çekmeköy and Başakşehir addresses and maps links.
  * - Menu only → the menu link.
- * - Menu + location without a branch → the menu link, then the branch prompt.
- * - Menu + location with a branch → the menu link, then the branch location.
- * - Neither intent (including empty input) → the fallback reply.
+ * - Menu + location → the menu link followed by both branch locations.
+ * - Neither intent (including empty input) → the phone fallback.
  */
 export function buildNurablaReply(body: string): string {
   const { location, menu } = detectNurablaIntent(body);
-  const branch = location ? detectNurablaBranch(body) : null;
-
-  const locationSection = branch
-    ? branchLocationText(branch)
-    : NURABLA_BRANCH_PROMPT;
 
   if (location && menu) {
-    return `${menuText()}\n\n${locationSection}`;
+    return `${menuText()}\n\n${locationText()}`;
   }
   if (location) {
-    return locationSection;
+    return locationText();
   }
   if (menu) {
     return menuText();
