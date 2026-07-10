@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sendWhatsAppText, MetaWhatsAppError } from "@/lib/metaWhatsApp";
+import { sendOutbound } from "@/lib/outboundSend";
 
 function maskToken(token: string | undefined): {
   hasToken: boolean;
@@ -68,41 +68,39 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       : null,
   };
 
-  // ── 3. Attempt send ───────────────────────────────────────────────────────
-  try {
-    await sendWhatsAppText(to, body);
+  // ── 3. Attempt send — through the mandatory compliance gate ──────────────
+  // Test sends obey the same rules as production sends: a number with no
+  // inbound history or a closed 24h window is BLOCKED, never sent.
+  const result = await sendOutbound({
+    to,
+    body,
+    kind: "test",
+    channel: "meta",
+    threadKey: to,
+  });
 
+  if (result.sent) {
     return NextResponse.json({
       ok: true,
       messageSent: true,
+      complianceDecision: result.decision,
       diagnostics,
     });
-  } catch (err) {
-    if (err instanceof MetaWhatsAppError) {
-      return NextResponse.json(
-        {
-          ok: false,
-          messageSent: false,
-          diagnostics,
-          error: {
-            message: err.message,
-            status: err.status,
-            metaError: err.metaError ?? null,
-          },
-        },
-        { status: 502 }
-      );
-    }
-
-    const message = err instanceof Error ? err.message : String(err);
-    return NextResponse.json(
-      {
-        ok: false,
-        messageSent: false,
-        diagnostics,
-        error: { message, status: null, metaError: null },
-      },
-      { status: 500 }
-    );
   }
+
+  const blockedByGate = result.decision !== "ALLOWED";
+  return NextResponse.json(
+    {
+      ok: false,
+      messageSent: false,
+      complianceDecision: result.decision,
+      diagnostics,
+      error: {
+        message: blockedByGate
+          ? `Blocked by compliance gate: ${result.decision}`
+          : result.error ?? "transport send failed",
+      },
+    },
+    { status: blockedByGate ? 403 : 502 }
+  );
 }

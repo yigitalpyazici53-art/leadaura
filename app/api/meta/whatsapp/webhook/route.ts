@@ -1,7 +1,8 @@
 import crypto from "crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { processInboundMessage } from "@/lib/inboundPipeline";
-import { sendWhatsAppText } from "@/lib/metaWhatsApp";
+import { sendOutbound } from "@/lib/outboundSend";
+import { handleAccountLevelWebhook } from "@/lib/compliance";
 import { notifyOwner } from "@/lib/twilio";
 import { logToSheet } from "@/lib/googleSheets";
 import { updateState } from "@/lib/conversationState";
@@ -111,6 +112,24 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   for (const entry of payload.entry ?? []) {
     for (const change of entry.changes ?? []) {
       const value = change.value;
+
+      // Account-level changes (quality rating, messaging limits, restrictions)
+      // feed the compliance circuit breaker before any message handling.
+      if (change.field && change.field !== "messages") {
+        try {
+          await handleAccountLevelWebhook(
+            change.field,
+            (value ?? {}) as Record<string, unknown>
+          );
+        } catch (err) {
+          console.error(
+            "[WhatsApp Webhook] account-level webhook handling failed:",
+            err instanceof Error ? err.message : err
+          );
+        }
+        continue;
+      }
+
       if (!value) continue;
 
       // Status updates (delivery/read receipts) — skip this change, continue batch
@@ -144,37 +163,56 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
           `[WhatsApp Webhook] from=${from} msgId=${messageId} bodyLen=${body.length} name=${profileName ?? "(none)"}`
         );
 
+        const tenantId = value.metadata?.phone_number_id;
+
         try {
           const result = await processInboundMessage({
             from,
             body,
             source: "whatsapp",
             profileName,
+            tenantId,
           });
 
           console.log(
             `[WhatsApp Webhook] pipeline done stage=${result.stateAfter.stage} leadScore=${result.stateAfter.leadScore ?? "none"}`
           );
 
-          // Send the assistant reply back to the customer
-          try {
-            await sendWhatsAppText(from, result.assistantReply);
-            console.log(`[WhatsApp Webhook] Reply sent to=${from}`);
-          } catch (err) {
-            console.error(
-              "[WhatsApp Webhook] Failed to send reply:",
-              err instanceof Error ? err.message : err
-            );
-          }
+          // Send the assistant reply back to the customer — through the
+          // mandatory compliance gate (24h window, inbound-only, rate limits,
+          // circuit breaker). A blocked send is logged by the gate itself.
+          const replyResult = await sendOutbound({
+            to: from,
+            body: result.assistantReply,
+            kind: "bot_reply",
+            channel: "meta",
+            tenantId,
+            threadKey: from,
+          });
+          console.log(
+            `[WhatsApp Webhook] reply sent=${replyResult.sent} decision=${replyResult.decision}`
+          );
 
           // ── Booking link handoff ──────────────────────────────────────────
           // Shared decision: runtime booking-URL read, safe diagnostic log, and the
           // flag-only-after-successful-send ordering — identical to the Twilio route.
+          // The injected sender throws when the gate blocks or the transport fails,
+          // so bookingLinkSent stays false and a later turn retries.
           await handleBookingHandoff({
             from,
             stateAfter: result.stateAfter,
             channel: "meta",
-            send: sendWhatsAppText,
+            send: async (to, sendBody) => {
+              const r = await sendOutbound({
+                to,
+                body: sendBody,
+                kind: "booking_handoff",
+                channel: "meta",
+                tenantId,
+                threadKey: from,
+              });
+              if (!r.sent) throw new Error(`send blocked or failed: ${r.decision}`);
+            },
           });
 
           // ── Owner notification ────────────────────────────────────────────

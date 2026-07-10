@@ -107,12 +107,19 @@ const hasWhatsAppConfig = !!(
 
 async function trySendWhatsApp(to: string, body: string): Promise<void> {
   if (hasWhatsAppConfig) {
-    const { sendWhatsAppText } = await import("../lib/metaWhatsApp");
-    try {
-      await sendWhatsAppText(to, body);
+    // Real sends go through the mandatory compliance gate — same as production.
+    const { sendOutbound } = await import("../lib/outboundSend");
+    const result = await sendOutbound({
+      to,
+      body,
+      kind: "bot_reply",
+      channel: "meta",
+      threadKey: to,
+    });
+    if (result.sent) {
       console.log(`  [WhatsApp SENT] to=${to}`);
-    } catch (err) {
-      console.error("  [WhatsApp SEND ERROR]", err instanceof Error ? err.message : err);
+    } else {
+      console.error(`  [WhatsApp NOT SENT] decision=${result.decision} error=${result.error ?? "(gate blocked)"}`);
     }
   } else {
     console.log(`  [WhatsApp MOCK] to=${to} body="${body.slice(0, 60)}${body.length > 60 ? "..." : ""}"`);

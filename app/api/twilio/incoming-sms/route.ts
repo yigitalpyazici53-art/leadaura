@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import twilio from "twilio";
-import { sendSms, notifyOwner } from "@/lib/twilio";
+import { notifyOwner } from "@/lib/twilio";
+import { sendOutbound } from "@/lib/outboundSend";
 import { logToSheet } from "@/lib/googleSheets";
 import { updateState } from "@/lib/conversationState";
 import { getRedis } from "@/lib/redis";
@@ -150,23 +151,38 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     `[SMS] pipeline done stage=${result.stateAfter.stage} leadScore=${result.stateAfter.leadScore ?? "none"}`
   );
 
-  // ── 5. Send reply to customer ────────────────────────────────────────────
-  try {
-    await sendSms(from, result.assistantReply);
-    console.log(`[SMS] reply sent to=${from}`);
-  } catch (err) {
-    console.error("[SMS] Failed to send reply:", err instanceof Error ? err.message : err);
-  }
+  // ── 5. Send reply to customer — through the mandatory compliance gate ────
+  // (24h window + inbound-only apply when `from` is a whatsapp: recipient;
+  // pacing, rate limits, and the audit log apply to every patient send.)
+  const replyResult = await sendOutbound({
+    to: from,
+    body: result.assistantReply,
+    kind: "bot_reply",
+    channel: "twilio",
+    threadKey: from,
+  });
+  console.log(`[SMS] reply sent=${replyResult.sent} decision=${replyResult.decision}`);
 
   // ── 6. Booking link handoff ──────────────────────────────────────────────
   // Runtime booking-URL read + skip/attempt/sent decision live in the shared handler
   // so this channel and the Meta webhook stay in lockstep. `from` retains any
   // "whatsapp:" prefix so the follow-up reaches WhatsApp when Twilio delivered it there.
+  // The injected sender throws when the gate blocks or the transport fails, so
+  // bookingLinkSent stays false and a later turn retries.
   await handleBookingHandoff({
     from,
     stateAfter: result.stateAfter,
     channel: "twilio",
-    send: sendSms,
+    send: async (to, sendBody) => {
+      const r = await sendOutbound({
+        to,
+        body: sendBody,
+        kind: "booking_handoff",
+        channel: "twilio",
+        threadKey: from,
+      });
+      if (!r.sent) throw new Error(`send blocked or failed: ${r.decision}`);
+    },
   });
 
   // ── 7. Owner notification ────────────────────────────────────────────────

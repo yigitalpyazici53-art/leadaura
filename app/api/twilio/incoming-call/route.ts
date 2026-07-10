@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { sendSms } from "@/lib/twilio";
+import { sendOutbound } from "@/lib/outboundSend";
 import { sanitizeSmsText } from "@/lib/sanitize";
 import { logToSheet } from "@/lib/googleSheets";
 
@@ -37,9 +37,19 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   console.log(`[Voice] From: ${from} | To: ${to} | CallSid: ${callSid}`);
   console.log(`[Voice] Sending missed-call SMS (${MISSED_CALL_SMS.length} chars): ${MISSED_CALL_SMS}`);
 
+  // Plain-SMS send through the compliance gate: window rules don't apply to
+  // SMS, but pacing, rate limits, and the audit trail do.
   try {
-    await sendSms(from, MISSED_CALL_SMS);
-    console.log(`[Voice] Missed-call SMS sent to ${from}`);
+    const smsResult = await sendOutbound({
+      to: from,
+      body: MISSED_CALL_SMS,
+      kind: "system",
+      channel: "twilio",
+      threadKey: from,
+    });
+    console.log(
+      `[Voice] Missed-call SMS to ${from} sent=${smsResult.sent} decision=${smsResult.decision}`
+    );
   } catch (err) {
     console.error("[Voice] Failed to send missed-call SMS:", err);
   }
