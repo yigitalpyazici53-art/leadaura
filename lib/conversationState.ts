@@ -33,6 +33,8 @@ export interface ConversationState {
   ownerAlertedComplete?: boolean;
   sheetLoggedComplete?: boolean;
   bookingLinkSent?: boolean;
+  // When true, the bot stops auto-replying so a human owner can take over the thread.
+  humanHandoff?: boolean;
   // Qualification fields
   serviceCategory?: ServiceCategory;
   travellingFromAbroad?: boolean;
@@ -75,7 +77,7 @@ function applyNorm(state: ConversationState): ConversationState {
 }
 
 function freshState(): ConversationState {
-  return { stage: "collect_treatment_area", history: [], lastUpdated: Date.now() };
+  return { stage: "collect_treatment_area", history: [], lastUpdated: Date.now(), humanHandoff: false };
 }
 
 // ── Explicit key / read / write helpers ───────────────────────────────────────
