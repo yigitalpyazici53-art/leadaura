@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 
 export const metadata: Metadata = {
-  title: "RandevuFlow — Lazer Epilasyon ve Estetik Merkezleri için AI Randevu Asistanı",
-  description: "WhatsApp mesajlarınızı otomatik olarak dolu randevulara çevirin. Lazer epilasyon ve estetik merkezleri için 7/24 AI müşteri asistanı.",
+  title: "Welcaria | Klinikler için Yapay Zeka WhatsApp Hasta Karşılama",
+  description:
+    "Welcaria, klinikler için 7/24 çalışan yapay zeka hasta karşılama sistemi. WhatsApp'tan gelen hasta mesajlarına saniyeler içinde, hastanın dilinde profesyonel yanıt.",
 };
 
 export default function RootLayout({
