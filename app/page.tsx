@@ -6,8 +6,7 @@ const outfit = Outfit({
   display: "swap",
 });
 
-// TODO: replace with the real WhatsApp number before launch
-const WA_URL = `https://wa.me/1234567890?text=${encodeURIComponent(
+const WA_URL = `https://wa.me/905419473049?text=${encodeURIComponent(
   "Merhaba! Welcaria demosu talep etmek istiyorum."
 )}`;
 
