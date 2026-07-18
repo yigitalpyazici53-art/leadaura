@@ -20,6 +20,8 @@ out/
 *.log
 npm-debug.log*
 .DS_Store
+cookies.txt
 Usersyigitrapidflow-plumbing.env.local
 .claude/settings.local.json
 tsconfig.tsbuildinfo
+.env*
