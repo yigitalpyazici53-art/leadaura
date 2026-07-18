@@ -1,7 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStateStorageMode, deleteConversationState } from "@/lib/conversationState";
+import { secretsMatch } from "@/lib/secretCompare";
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
+  // ── 0. Disabled in production ─────────────────────────────────────────────
+  // This is a test/diagnostic endpoint and must never be reachable on prod.
+  if (process.env.VERCEL_ENV === "production") {
+    return NextResponse.json({ ok: false, error: "Not found" }, { status: 404 });
+  }
+
   // ── 1. Validate secret ───────────────────────────────────────────────────
   const configuredSecret = process.env.TEST_WEBHOOK_SECRET;
   if (!configuredSecret) {
@@ -18,7 +25,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
   }
 
-  if (!parsed.secret || parsed.secret !== configuredSecret) {
+  if (!secretsMatch(parsed.secret, configuredSecret)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 

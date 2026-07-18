@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStateStorageMode, updateState } from "@/lib/conversationState";
+import { secretsMatch } from "@/lib/secretCompare";
 
 // Manual human-handoff toggle. Lets the owner pause (paused=true) or resume
 // (paused=false) the bot on a specific conversation. Protected by the same
@@ -21,7 +22,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ ok: false, error: "Invalid JSON body" }, { status: 400 });
   }
 
-  if (!parsed.secret || parsed.secret !== configuredSecret) {
+  if (!secretsMatch(parsed.secret, configuredSecret)) {
     return NextResponse.json({ ok: false, error: "Unauthorized" }, { status: 401 });
   }
 
