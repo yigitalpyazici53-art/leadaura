@@ -1,5 +1,13 @@
 export const SMS_MAX_CHARS = 120;
 
+// Masks a phone-like value for console output, keeping only the last 4 digits
+// ("whatsapp:+905551113049" → "***3049"). Log/console use ONLY — stored data
+// (Redis state, Sheets rows, compliance keys) must keep the raw number.
+export function maskPhone(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  return `***${digits.slice(-4)}`;
+}
+
 const APO = "\x27";
 
 const CONTRACTIONS: Array<[RegExp, string]> = [

@@ -7,6 +7,7 @@ import { notifyOwner } from "@/lib/twilio";
 import { logToSheet } from "@/lib/googleSheets";
 import { updateState } from "@/lib/conversationState";
 import { handleBookingHandoff } from "@/lib/bookingHandoff";
+import { maskPhone } from "@/lib/sanitize";
 
 // Types for the Meta WhatsApp Cloud API webhook payload
 interface MetaWebhookPayload {
@@ -160,7 +161,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
 
         const profileName = value.contacts?.[0]?.profile?.name;
         console.log(
-          `[WhatsApp Webhook] from=${from} msgId=${messageId} bodyLen=${body.length} name=${profileName ?? "(none)"}`
+          `[WhatsApp Webhook] from=${maskPhone(from)} msgId=${messageId} bodyLen=${body.length} name=${profileName ? "(present)" : "(none)"}`
         );
 
         const tenantId = value.metadata?.phone_number_id;

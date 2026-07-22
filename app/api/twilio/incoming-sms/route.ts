@@ -7,6 +7,7 @@ import { updateState } from "@/lib/conversationState";
 import { getRedis } from "@/lib/redis";
 import { processInboundMessage } from "@/lib/inboundPipeline";
 import { handleBookingHandoff } from "@/lib/bookingHandoff";
+import { maskPhone } from "@/lib/sanitize";
 
 const EMPTY_TWIML = '<?xml version="1.0" encoding="UTF-8"?><Response></Response>';
 
@@ -53,7 +54,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
   }
 
-  console.log(`[SMS] parsed from=${from} to=${to} sid=${messageSid} body-len=${customerMessage.length}`);
+  console.log(`[SMS] parsed from=${maskPhone(from)} to=${maskPhone(to)} sid=${messageSid} body-len=${customerMessage.length}`);
 
   // ── 2. MessageSid deduplication ──────────────────────────────────────────
   if (messageSid) {

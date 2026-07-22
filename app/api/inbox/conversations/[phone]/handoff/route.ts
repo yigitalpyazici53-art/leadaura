@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getStateStorageMode, updateState } from "@/lib/conversationState";
+import { maskPhone } from "@/lib/sanitize";
 
 // Authenticated pause/resume wrapper for the pilot inbox. Protected by
 // middleware.ts (the /api/inbox/* session-cookie guard).
@@ -39,12 +40,12 @@ export async function POST(
   try {
     await updateState(phone, { humanHandoff: parsed.paused });
     console.log(
-      `[Inbox] handoff set phone=${phone} humanHandoff=${parsed.paused} stateStorage=${stateStorage}`
+      `[Inbox] handoff set phone=${maskPhone(phone)} humanHandoff=${parsed.paused} stateStorage=${stateStorage}`
     );
     return NextResponse.json({ ok: true, phone, humanHandoff: parsed.paused, stateStorage });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    console.error(`[Inbox] handoff update failed for phone=${phone}: ${error}`);
+    console.error(`[Inbox] handoff update failed for phone=${maskPhone(phone)}: ${error}`);
     return NextResponse.json({ ok: false, error, stateStorage }, { status: 500 });
   }
 }

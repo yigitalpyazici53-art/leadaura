@@ -1,5 +1,5 @@
 import twilio from "twilio";
-import { sanitizeSmsText } from "./sanitize";
+import { sanitizeSmsText, maskPhone } from "./sanitize";
 import { treatmentAreaLabel } from "./localization";
 import type { ConversationState } from "./conversationState";
 
@@ -18,7 +18,7 @@ function validateTwilioConfig(): { accountSid: string; authToken: string; fromNu
 export async function sendSms(to: string, body: string): Promise<void> {
   const { accountSid, authToken, fromNumber } = validateTwilioConfig();
   const clean = sanitizeSmsText(body);
-  console.log(`[Twilio] sending to=${to} len=${clean.length}`);
+  console.log(`[Twilio] sending to=${maskPhone(to)} len=${clean.length}`);
   const client = twilio(accountSid, authToken);
   const msg = await client.messages.create({ from: fromNumber, to, body: clean });
   console.log(`[Twilio] sent sid=${msg.sid}`);
@@ -96,7 +96,7 @@ export async function notifyOwner(
     throw new Error(msg);
   }
 
-  console.log(`[OwnerAlert] to=${ownerPhone} customer=${customerFrom}`);
+  console.log(`[OwnerAlert] to=${maskPhone(ownerPhone)} customer=${maskPhone(customerFrom)}`);
 
   if (ownerPhone === customerFrom) {
     console.warn(

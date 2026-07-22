@@ -1,4 +1,5 @@
 import { google } from "googleapis";
+import { maskPhone } from "./sanitize";
 
 const SCOPES = ["https://www.googleapis.com/auth/spreadsheets"];
 
@@ -81,7 +82,7 @@ export async function logToSheet(entry: LogEntry): Promise<LogToSheetResult> {
       requestBody: { values: [row] },
     });
 
-    console.log("[Sheets] Logged lead for", entry.phone);
+    console.log("[Sheets] Logged lead for", maskPhone(entry.phone));
     return { skipped: false };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);

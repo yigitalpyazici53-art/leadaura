@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStateStorageMode, deleteConversationState } from "@/lib/conversationState";
 import { secretsMatch } from "@/lib/secretCompare";
+import { maskPhone } from "@/lib/sanitize";
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   // ── 0. Disabled in production ─────────────────────────────────────────────
@@ -40,12 +41,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     const deletedKeys = await deleteConversationState(from);
     console.log(
-      `[TestReset] Reset from=${from} keys=${deletedKeys.join(",")} stateStorage=${stateStorage}`
+      `[TestReset] Reset from=${maskPhone(from)} keyCount=${deletedKeys.length} stateStorage=${stateStorage}`
     );
     return NextResponse.json({ ok: true, from, deletedKeys, stateStorage });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    console.error(`[TestReset] Redis delete failed for from=${from}: ${error}`);
+    console.error(`[TestReset] Redis delete failed for from=${maskPhone(from)}: ${error}`);
     return NextResponse.json({ ok: false, error, stateStorage }, { status: 500 });
   }
 }

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { sendOutbound } from "@/lib/outboundSend";
 import { addToHistory, getStateStorageMode } from "@/lib/conversationState";
 import type { ComplianceDecision } from "@/lib/compliance";
+import { maskPhone } from "@/lib/sanitize";
 
 // Manual owner reply for the pilot inbox. Protected by middleware.ts.
 //
@@ -70,7 +71,7 @@ export async function POST(
     });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    console.error(`[Inbox] manual reply send threw for ${phone}:`, error);
+    console.error(`[Inbox] manual reply send threw for ${maskPhone(phone)}:`, error);
     return NextResponse.json({ ok: false, error, stateStorage }, { status: 500 });
   }
 
@@ -78,7 +79,7 @@ export async function POST(
     // Gate blocked or transport failed — surface a clear, displayable error.
     const isTransport = result.decision === "ALLOWED"; // allowed by gate but transport threw
     console.warn(
-      `[Inbox] manual reply not sent to ${phone} decision=${result.decision}${result.error ? ` error=${result.error}` : ""}`
+      `[Inbox] manual reply not sent to ${maskPhone(phone)} decision=${result.decision}${result.error ? ` error=${result.error}` : ""}`
     );
     return NextResponse.json(
       {
@@ -102,12 +103,12 @@ export async function POST(
     // The message DID go out; failing to log history must not report a failed
     // send. Warn and still return success.
     console.error(
-      `[Inbox] manual reply sent to ${phone} but addToHistory failed:`,
+      `[Inbox] manual reply sent to ${maskPhone(phone)} but addToHistory failed:`,
       err instanceof Error ? err.message : err
     );
   }
 
-  console.log(`[Inbox] manual reply sent to ${phone} (kind=system)`);
+  console.log(`[Inbox] manual reply sent to ${maskPhone(phone)} (kind=system)`);
   return NextResponse.json({
     ok: true,
     sent: true,

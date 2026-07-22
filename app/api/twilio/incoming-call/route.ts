@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import twilio from "twilio";
 import { sendOutbound } from "@/lib/outboundSend";
-import { sanitizeSmsText } from "@/lib/sanitize";
+import { sanitizeSmsText, maskPhone } from "@/lib/sanitize";
 import { logToSheet } from "@/lib/googleSheets";
 
 const MISSED_CALL_SMS = sanitizeSmsText(
@@ -36,7 +36,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
     });
   }
 
-  console.log(`[Voice] From: ${from} | To: ${to} | CallSid: ${callSid}`);
+  console.log(`[Voice] From: ${maskPhone(from)} | To: ${maskPhone(to)} | CallSid: ${callSid}`);
 
   // ── Validate Twilio signature in production ──────────────────────────────
   // Mirrors the incoming-sms route: an unsigned/forged POST must not be able to
@@ -83,7 +83,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       threadKey: from,
     });
     console.log(
-      `[Voice] Missed-call SMS to ${from} sent=${smsResult.sent} decision=${smsResult.decision}`
+      `[Voice] Missed-call SMS to ${maskPhone(from)} sent=${smsResult.sent} decision=${smsResult.decision}`
     );
   } catch (err) {
     console.error("[Voice] Failed to send missed-call SMS:", err);

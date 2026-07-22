@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getStateStorageMode, updateState } from "@/lib/conversationState";
 import { secretsMatch } from "@/lib/secretCompare";
+import { maskPhone } from "@/lib/sanitize";
 
 // Manual human-handoff toggle. Lets the owner pause (paused=true) or resume
 // (paused=false) the bot on a specific conversation. Protected by the same
@@ -41,12 +42,12 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   try {
     await updateState(from, { humanHandoff: parsed.paused });
     console.log(
-      `[Handoff] set from=${from} humanHandoff=${parsed.paused} stateStorage=${stateStorage}`
+      `[Handoff] set from=${maskPhone(from)} humanHandoff=${parsed.paused} stateStorage=${stateStorage}`
     );
     return NextResponse.json({ ok: true, from, humanHandoff: parsed.paused, stateStorage });
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    console.error(`[Handoff] update failed for from=${from}: ${error}`);
+    console.error(`[Handoff] update failed for from=${maskPhone(from)}: ${error}`);
     return NextResponse.json({ ok: false, error, stateStorage }, { status: 500 });
   }
 }

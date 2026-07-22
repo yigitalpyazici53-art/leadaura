@@ -6,6 +6,7 @@ import {
 } from "@/lib/conversationState";
 import { deleteComplianceForThread } from "@/lib/compliance";
 import { deleteLeadFromSheets } from "@/lib/googleSheets";
+import { maskPhone } from "@/lib/sanitize";
 
 // Single-conversation read for the pilot inbox. Protected by middleware.ts.
 //
@@ -40,7 +41,7 @@ export async function GET(
     state = await readConversationState(phone);
   } catch (err) {
     const error = err instanceof Error ? err.message : String(err);
-    console.error(`[Inbox] conversation read failed for ${phone}:`, error);
+    console.error(`[Inbox] conversation read failed for ${maskPhone(phone)}:`, error);
     return NextResponse.json({ ok: false, error, stateStorage }, { status: 500 });
   }
 
@@ -125,7 +126,7 @@ export async function DELETE(
   const anyError = Boolean(redisState.error || compliance.error || sheets.error);
 
   console.log(
-    `[Inbox] erasure phone=${phone} redisKeys=${redisState.deletedKeys.length} complianceKeys=${compliance.deletedKeys.length} sheetRows=${sheets.deletedRows} anyError=${anyError}`
+    `[Inbox] erasure phone=${maskPhone(phone)} redisKeys=${redisState.deletedKeys.length} complianceKeys=${compliance.deletedKeys.length} sheetRows=${sheets.deletedRows} anyError=${anyError}`
   );
 
   return NextResponse.json(

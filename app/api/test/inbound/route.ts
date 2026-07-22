@@ -8,6 +8,7 @@ import {
 } from "@/lib/conversationState";
 import { processInboundMessage } from "@/lib/inboundPipeline";
 import { secretsMatch } from "@/lib/secretCompare";
+import { maskPhone } from "@/lib/sanitize";
 
 export async function POST(req: NextRequest): Promise<NextResponse> {
   // ── 0. Disabled in production ─────────────────────────────────────────────
@@ -96,7 +97,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
   }
 
   console.log(
-    `[TestInbound] done from=${from} intent=${result.intent} stage=${result.stateAfter.stage} stateStorage=${stateStorage} diagWriteSucceeded=${diagWriteSucceeded}`
+    `[TestInbound] done from=${maskPhone(from)} intent=${result.intent} stage=${result.stateAfter.stage} stateStorage=${stateStorage} diagWriteSucceeded=${diagWriteSucceeded}`
   );
 
   return NextResponse.json({

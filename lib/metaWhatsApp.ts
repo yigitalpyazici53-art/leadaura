@@ -1,3 +1,5 @@
+import { maskPhone } from "./sanitize";
+
 export interface MetaApiError {
   message: string;
   type?: string;
@@ -60,5 +62,5 @@ export async function sendWhatsAppText(to: string, body: string): Promise<void> 
   }
 
   const data = await response.json().catch(() => null) as { messages?: Array<{ id: string }> } | null;
-  console.log(`[MetaWhatsApp] Sent to=${to} messageId=${data?.messages?.[0]?.id ?? "(unknown)"}`);
+  console.log(`[MetaWhatsApp] Sent to=${maskPhone(to)} messageId=${data?.messages?.[0]?.id ?? "(unknown)"}`);
 }

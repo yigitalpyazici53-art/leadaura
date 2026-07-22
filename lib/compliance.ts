@@ -1,4 +1,5 @@
 import { getRedis } from "./redis";
+import { maskPhone } from "./sanitize";
 
 // ── Meta ban-protection / compliance layer ────────────────────────────────────
 //
@@ -261,10 +262,15 @@ export interface ComplianceLogEntry {
 
 export async function logCompliance(entry: ComplianceLogEntry): Promise<void> {
   const line = JSON.stringify(entry);
+  // Console gets a phone-masked copy; the Redis audit trail keeps the raw thread
+  // key so KVKK erasure and window checks can still match it.
+  const consoleLine = entry.thread
+    ? JSON.stringify({ ...entry, thread: maskPhone(entry.thread) })
+    : line;
   if (entry.event === "ALLOWED") {
-    console.log(`[Compliance] ${line}`);
+    console.log(`[Compliance] ${consoleLine}`);
   } else {
-    console.warn(`[Compliance] ${line}`);
+    console.warn(`[Compliance] ${consoleLine}`);
   }
   const r = getRedis();
   if (r) {

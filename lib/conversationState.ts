@@ -1,4 +1,5 @@
 import { getRedis } from "./redis";
+import { maskPhone } from "./sanitize";
 
 export type Stage =
   | "collect_treatment_area"
@@ -129,7 +130,7 @@ export async function getState(phone: string): Promise<ConversationState> {
         const parsed = (typeof raw === "string" ? JSON.parse(raw) : raw) as Record<string, unknown>;
         const stored: ConversationState = { ...(parsed as unknown as ConversationState), stage: normalizeLegacyStage(parsed) };
         if (Date.now() - stored.lastUpdated < STATE_TTL_MS) return stored;
-        console.log(`[State] Expired Redis state for ${phone} — resetting`);
+        console.log(`[State] Expired Redis state for ${maskPhone(phone)} — resetting`);
       }
     } catch (err) {
       console.error("[State] Redis get failed, falling back to memory:", err instanceof Error ? err.message : err);
@@ -144,7 +145,7 @@ export async function getState(phone: string): Promise<ConversationState> {
   const existing = memStore.get(phone);
   if (existing) {
     if (Date.now() - existing.lastUpdated < STATE_TTL_MS) return applyNorm(existing);
-    console.log(`[State] Expired state for ${phone} — resetting`);
+    console.log(`[State] Expired state for ${maskPhone(phone)} — resetting`);
   }
   const state = freshState();
   memStore.set(phone, state);
